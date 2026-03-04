@@ -1,19 +1,39 @@
 # network.py
 import asyncio
 import contextlib
+import random
+import typing
 from collections.abc import AsyncIterator
-from typing import Any, NotRequired, TypedDict, Unpack
+from typing import TypedDict, Unpack
 
 import httpx
 from aiolimiter import AsyncLimiter
+from httpx._client import UseClientDefault
+from httpx._types import (
+    AuthTypes,
+    CookieTypes,
+    HeaderTypes,
+    QueryParamTypes,
+    RequestContent,
+    RequestData,
+    RequestExtensions,
+    RequestFiles,
+    TimeoutTypes,
+)
 
 
-class RequestOptions(TypedDict):
-    params: NotRequired[dict[str, Any] | None]
-    headers: NotRequired[dict[str, str] | None]
-    json: NotRequired[Any]
-    data: NotRequired[Any]
-    timeout: NotRequired[float | None]
+class RequestOptions(TypedDict, total=False):
+    content: RequestContent | None
+    data: RequestData | None
+    files: RequestFiles | None
+    json: typing.Any | None
+    params: QueryParamTypes | None
+    headers: HeaderTypes | None
+    cookies: CookieTypes | None
+    auth: AuthTypes | UseClientDefault | None
+    follow_redirects: bool | UseClientDefault
+    timeout: TimeoutTypes | UseClientDefault
+    extensions: RequestExtensions | None
 
 
 class NetworkClient:
@@ -36,12 +56,12 @@ class NetworkClient:
                     resp = await self.client.request(method, url, **kwargs)
                     if resp.status_code >= 400:
                         if resp.status_code in {408, 429, 500, 502, 503, 504}:
-                            await asyncio.sleep(2**i)
+                            await asyncio.sleep(random.uniform(0, 2**i))
                             continue
                         return None  # Фатальная ошибка (404)
                     return resp
                 except httpx.RequestError:
-                    await asyncio.sleep(2**i)
+                    await asyncio.sleep(random.uniform(0, i**2))
         return None
 
     @contextlib.asynccontextmanager

@@ -50,25 +50,20 @@ class StorageManager:
                 return File.from_json(content) if content else None
         return None
 
-    def delete_state(self, files: dict[str, File]) -> None:
-        for fname in files:
-            self.get_state_path(fname).unlink(missing_ok=True)
+    def delete_state(self, filename: str) -> None:
+        self.get_state_path(filename).unlink(missing_ok=True)
 
-    def verify_size(self, files: dict[str, File]) -> None:
-        for fname, file in files.items():
-            file_path = self.out_dir / fname
-            # 1. Проверяем физический размер файла
-            if file_path.is_file():
-                actual_size = file_path.stat().st_size
-                expected_size = file.content_length
+    def verify_size(self, file: File) -> None:
+        file_path = self.out_dir / file.filename
+        # 1. Проверяем физический размер файла
+        if file_path.is_file():
+            actual_size = file_path.stat().st_size
+            expected_size = file.content_length
 
-                if expected_size and actual_size != expected_size:
-                    err_msg = f"[!] Файл битый: {fname} ({actual_size} != {expected_size})"
+            if expected_size and actual_size != expected_size:
+                err_msg = f"[!] Файл битый: {file.filename} ({actual_size} != {expected_size})"
 
-                    # self._monitor.log(f"[red]{err_msg}[/]")
-                    raise ValueError(err_msg)
-
-                # self._monitor.done(fname)  # Просто визуальный эффект!
+                raise ValueError(err_msg)
 
     def verify_file_hash(self, file: File) -> None:
         """Синхронный метод для запуска в экзекуторе"""

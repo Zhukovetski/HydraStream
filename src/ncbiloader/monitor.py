@@ -115,7 +115,7 @@ class ProgressMonitor:
                 refresh_per_second=10,
             )
 
-    def log(self, message: str) -> None:
+    def log(self, message: str, progress: bool = False) -> None:
         """Универсальный метод логирования"""
         timestamp = datetime.now().strftime("[%H:%M:%S]")
         formatted_msg = f"{timestamp} {message}"
@@ -127,7 +127,8 @@ class ProgressMonitor:
         if not self.silent:
             # Если работает прогресс-бар, пишем НАД ним
             if self.progress:
-                self.progress.console.print(message)  # Rich сам разберется с версткой
+                if progress:
+                    self.progress.console.print(message)  # Rich сам разберется с версткой
             else:
                 self.console.print(message)
         else:
@@ -156,9 +157,7 @@ class ProgressMonitor:
             self.tasks[filename] = task_id
             self.total_bytes += total_size
             self.total_files += 1
-        else:
-            # В тихом режиме просто пишем в лог
-            self.log(f"Start downloading: {filename} ({total_size} bytes)")
+            self._update_panel_title()
 
     def update(self, filename: str, advance_bytes: int) -> None:
         """
@@ -192,8 +191,9 @@ class ProgressMonitor:
             del self.tasks[filename]
             self.files_completed += 1
             self.active_files.remove(filename)
+            self._update_panel_title()
 
-        self.log(f"[bold green]✔ Done: {filename}[/]")
+        self.log(f"[bold green]✔ Done: {filename}[/]", True)
 
     def _make_panel(self) -> Panel | str:
         """This method now handles BOTH logic and UI creation 10x per second."""
@@ -214,7 +214,9 @@ class ProgressMonitor:
             hours, mins = divmod(mins, 60)
         time_str = f"{hours:02d}:{mins:02d}:{secs:02d}"
 
-        remain_time = (self.total_bytes - self.download_bytes) / avg_speed if self.total_bytes else 0
+        remain_time = (
+            (self.total_bytes - self.download_bytes) / avg_speed if self.total_bytes and avg_speed else 0
+        )
 
         r_mins, r_secs = divmod(int(remain_time), 60)
         r_hours = 0

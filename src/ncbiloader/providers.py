@@ -10,7 +10,7 @@ class NCBIProvider:
         if "ncbi.nlm.nih.gov" not in url:
             return None
 
-        base_url = url.rstrip("/")
+        base_url = url.rsplit("/", 1)[0]
         checksum_url = f"{base_url}/md5checksums.txt"
 
         resp = await self.network.safe_request("GET", checksum_url)

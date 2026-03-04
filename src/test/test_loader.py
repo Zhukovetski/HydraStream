@@ -90,7 +90,7 @@ async def test_graceful_shutdown_prevents_hang_run(tmp_path: Path) -> None:
     await asyncio.sleep(0.5)
 
     # 3. ИМИТАЦИЯ НАЖАТИЯ Ctrl+C (Посылаем сигнал остановки)
-    loader.stop()
+    await loader.stop()
 
     # 4. МОМЕНТ ИСТИНЫ
     # Ждем завершения run_task максимум 2 секунды.
@@ -137,7 +137,7 @@ async def test_graceful_shutdown_prevents_hang_stream(tmp_path: Path) -> None:
     await asyncio.sleep(0.5)
 
     # 4. Бьем по тормозам
-    loader.stop()
+    await loader.stop()
 
     # 5. Ждем завершения с тайм-аутом
     try:
