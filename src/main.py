@@ -34,10 +34,7 @@ async def async_main(
     if md5 and len(links) == 1:
         expected_checksums[links[0]] = md5
     elif md5 and len(links) > 1:
-        typer.secho(
-            "Предупреждение: Флаг --md5 игнорируется для нескольких ссылок.",
-            fg="yellow",
-        )
+        typer.secho("Предупреждение: Флаг --md5 игнорируется для нескольких ссылок.", fg="yellow", err=True)
 
     async with NCBILoader(
         threads=threads,
@@ -53,11 +50,10 @@ async def async_main(
             # Проверяем, куда мы пишем.
             # sys.stdout.isatty() == True, если это терминал (человек смотрит).
             # sys.stdout.isatty() == False, если это труба (|) или файл (>).
-            stream_to_stdout = not sys.stdout.isatty()
+            assert sys.__stdout__ is not None
+            stream_to_stdout = sys.__stdout__.isatty()
 
             async for _, file_gen in loader.stream_all(links, expected_checksums):
-                # typer.secho(f"Streaming: {filename}", fg="green", err=True)
-
                 async for chunk in file_gen:
                     if stream_to_stdout:
                         # Пишем сырые байты в stdout
@@ -109,7 +105,7 @@ def loader(
     NCBI Async Downloader: Быстрый загрузчик геномных данных.
     """
     if not links:
-        typer.secho("Нет ссылок для скачивания!", fg="red", bold=True)
+        typer.secho("Нет ссылок для скачивания!", fg="red", bold=True, err=True)
         raise typer.Exit(code=1)
 
     try:
@@ -132,7 +128,7 @@ def loader(
         typer.secho("\n⛔ Прервано пользователем.", fg="yellow", err=True)
     except Exception as e:
         typer.secho(f"\n💥 Критическая ошибка: {e}", fg="red", bold=True, err=True)
-        # raise  # Раскомментируй для отладки
+        raise  # Раскомментируй для отладки
 
 
 if __name__ == "__main__":

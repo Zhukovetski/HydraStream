@@ -1,13 +1,14 @@
 # Copyright (c) 2026 Valentin Zhukovetski
 # Licensed under the MIT License.
 
+import asyncio
 import time
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
-from typing import Self
+from typing import Literal, Self
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import (
@@ -15,6 +16,7 @@ from rich.progress import (
     FileSizeColumn,
     Progress,
     ProgressColumn,
+    SpinnerColumn,
     Task,
     TaskID,
     TextColumn,
@@ -23,11 +25,36 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from rich.progress_bar import ProgressBar
+from rich.table import Column, Table
 from rich.text import Text
+
+STATUS = Literal["SUCCESS", "INFO", "WARNING", "ERROR", "CRITICAL", "INTERRUPT"]
+
+
+def truncate_filename(name: str, w: int = 30) -> str:
+    """
+    Truncates a long filename from the middle to preserve the extension and prefix.
+
+    Args:
+        name (str): Original filename.
+        w (int): Maximum allowed width.
+
+    Returns:
+        str: Truncated string with ellipses if it exceeds the specified width.
+    """
+    return f"{name[: w // 2 - 1]}...{name[-w // 2 + 2 :]}" if len(name) > w else name
 
 
 def get_gradient_color(percentage: float) -> str:
-    """Математика цвета: Красный -> Желтый -> Зеленый"""
+    """
+    Calculates a hex color transitioning smoothly from Red (0%) to Yellow (50%) to Green (100%).
+
+    Args:
+        percentage (float): The completion percentage.
+
+    Returns:
+        str: Hex color code (e.g., '#ff0000').
+    """
     p = max(0, min(100, percentage or 0))
     if p < 50:
         r, g, b = 255, int((p / 50) * 255), 0
@@ -37,68 +64,72 @@ def get_gradient_color(percentage: float) -> str:
 
 
 class GradientBar(BarColumn):
-    """Ваша полоса, которая меняет цвет"""
+    """Custom Rich BarColumn that applies a dynamic color gradient based on progress."""
 
     def render(self, task: Task) -> ProgressBar:
-        # 1. Если задача завершена — включаем спецэффект
-        if task.finished:
-            # "blink" заставляет текст/полосу мигать (поддерживается не всеми терминалами)
-            # "bold bright_green" делает цвет максимально насыщенным
+        # Color for indeterminate processes (pulsing effect)
+        if task.total is None:
+            self.complete_style = "cyan"
+        elif task.finished:
+            # High-visibility style for completed tasks
             self.complete_style = "bold bright_green blink"
-            self.finished_style = "bold bright_green blink"
         else:
-            # 2. Если в процессе — считаем градиент как обычно
+            # Dynamic gradient calculation
             self.complete_style = get_gradient_color(task.percentage)
-            self.finished_style = "bold green"  # Стиль "по умолчанию" для конца
         return super().render(task)
 
 
 class GradientPercent(ProgressColumn):
-    """Ваш текст процентов, который меняет цвет"""
+    """Custom Rich ProgressColumn that displays the percentage with a matching gradient color."""
 
     def render(self, task: Task) -> Text:
+        if task.total is None:
+            return Text(" CALC ", style="yellow")
         p = task.percentage
         color = get_gradient_color(p)
         return Text(f"{p:>5.1f}%", style=f"bold {color}")
 
 
-class DynamicIconColumn(ProgressColumn):
-    """A column that changes its icon based on progress."""
-
-    def render(self, task: Task) -> Text:
-        p = task.percentage
-
-        if p < 100:
-            return Text("📁")
-        return Text("✅")
-
-
 class ProgressMonitor:
+    """
+    Manages the terminal UI and file-based logging for the download session.
+
+    Provides a declarative Rich UI with live updates, global ETA, and a
+    fallback mechanism (silent mode) for headless server environments.
+    """
+
     def __init__(self, silent: bool = False, log_file: Path | str | None = "download.log") -> None:
         self.silent = silent
         self.log_file = Path(log_file) if log_file else None
+
+        # Route UI to stderr to keep stdout clean for data streams (Unix pipes)
         self.console = Console(stderr=True)
         self.progress = None
+
         self.start_time = 0
         self.total_bytes = 0
         self.download_bytes = 0
         self.tasks: dict[str, TaskID] = {}
-        self.dinamic_title = ""
+        self.dynamic_title = ""
         self.total_files = 0
         self.active_files: set[str] = set()
         self.files_completed = 0
 
         if not self.silent:
-            # Настраиваем колонки: Имя, Бар, % , Размер, Скорость, Время
             self.progress = Progress(
-                DynamicIconColumn(),
-                TextColumn("[bold blue]{task.fields[filename]}", justify="right"),
-                GradientBar(bar_width=None, finished_style="bold green"),  # Заменили BarColumn
+                SpinnerColumn("aesthetic"),
+                TextColumn("[bold yellow]{task.description}"),
+                TextColumn(
+                    "[bold blue]{task.fields[filename]}",
+                    justify="left",
+                    table_column=Column(overflow="ellipsis", no_wrap=True, width=30),
+                ),
+                GradientBar(bar_width=None, finished_style="green"),
                 GradientPercent(),
                 "•",
-                FileSizeColumn(),  # Сколько скачано
+                FileSizeColumn(),
                 "/",
-                TotalFileSizeColumn(),  # Сколько всего
+                TotalFileSizeColumn(),
                 "•",
                 TransferSpeedColumn(),
                 "•",
@@ -115,56 +146,86 @@ class ProgressMonitor:
                 refresh_per_second=10,
             )
 
-    def log(self, message: str, progress: bool = False) -> None:
-        """Универсальный метод логирования"""
+    def log(self, message: str, status: STATUS = "INFO", progress: bool = False) -> None:
+        """
+        Universal logging method. Writes to the log file and conditionally
+        renders to the terminal UI based on the operational mode.
+
+        Args:
+            message (str): The log message content.
+            status (STATUS): Severity level dictating UI formatting.
+            progress (bool): If True, forces display in the UI even if it's an INFO message.
+        """
+
         timestamp = datetime.now().strftime("[%H:%M:%S]")
         formatted_msg = f"{timestamp} {message}"
 
-        # 1. Пишем в файл (всегда)
         self._write_log(formatted_msg)
 
-        # 2. Вывод на экран
+        match status.upper():
+            case "CRITICAL" | "INTERRUPT":
+                renderable = Panel(
+                    f"[bold red]⚠️ {message}[/]\n[dim white]Partial data may have been saved.",
+                    title="[bold red]Interrupted",
+                    border_style="red",
+                    expand=False,
+                )
+            case "ERROR":
+                renderable = Panel(
+                    f"[bold red]{message}[/]", title="Error", border_style="red", padding=(0, 1)
+                )
+            case "WARNING":
+                renderable = f"⚠️ [yellow]{formatted_msg}[/]"
+            case "INFO":
+                renderable = f"[white]{formatted_msg}[/]"
+            case "SUCCESS":
+                renderable = f"✅ [green]{formatted_msg}[/]"
+            case _:
+                renderable = message
+
         if not self.silent:
-            # Если работает прогресс-бар, пишем НАД ним
             if self.progress:
-                if progress:
-                    self.progress.console.print(message)  # Rich сам разберется с версткой
+                if progress or status in ["WARNING", "ERROR", "CRITICAL", "INTERRUPT"]:
+                    self.progress.console.print(renderable)
             else:
-                self.console.print(message)
+                self.console.print(renderable)
         else:
-            # Если silent, пишем просто текст в stderr
-            # (Rich умеет strip_styles, если надо убрать цвета для логов)
-            self.console.print(message)
+            self.console.print(renderable)
 
     def _write_log(self, msg: str) -> None:
+        """Appends a raw text message to the log file, stripping ANSI UI tags."""
+        if not self.log_file:
+            return
+
         if self.log_file:
-            # Открываем-закрываем (безопасно) или держим открытым (быстрее)
-            # Для логов лучше 'a' (append)
             try:
                 with self.log_file.open("a", encoding="utf-8") as f:
-                    # Убираем Rich-теги из файла, если они есть (библиотека re или rich.text.Text)
-                    from rich.text import Text
-
                     clean_msg = Text.from_markup(str(msg)).plain
                     f.write(f"{clean_msg}\n")
-            except Exception:
-                pass  # Логирование не должно ронять программу
+            except OSError:
+                # Graceful degradation: do not crash the app if logging fails
+                pass
 
-    def add_file(self, filename: str, total_size: int) -> None:
-        """Регистрирует новый файл в UI"""
+    def add_file(self, filename: str, total_size: int | None = None) -> None:
+        """Registers a new file in the UI, keeping it hidden until data arrives."""
         if self.progress:
-            task_id = self.progress.add_task("download", filename=filename, total=total_size, visible=False)
+            t_filename = truncate_filename(filename)
+            if total_size is None:
+                task_id = self.progress.add_task("Download MD5 for", filename=t_filename, total=total_size)
+            else:
+                task_id = self.progress.add_task(
+                    "Download file", filename=t_filename, total=total_size, visible=False
+                )
+                self.total_bytes += total_size
+                self.total_files += 1
             self.tasks[filename] = task_id
-            self.total_bytes += total_size
-            self.total_files += 1
             self._update_panel_title()
 
     def update(self, filename: str, advance_bytes: int) -> None:
-        """
-        Главный метод: обновляет прогресс конкретного файла.
-        advance_bytes - сколько байт ТОЛЬКО ЧТО скачали (размер чанка)
-        """
-        # В тихом режиме мы НЕ пишем каждый чанк в лог (иначе диск лопнет от логов)
+        """Updates the downloaded byte count and makes the task visible if active."""
+        if not self.live:
+            return
+
         self.download_bytes += advance_bytes
         if self.progress and filename in self.tasks:
             self.progress.update(self.tasks[filename], advance=advance_bytes, visible=True)
@@ -173,7 +234,7 @@ class ProgressMonitor:
                 self._update_panel_title()
 
     def _update_panel_title(self) -> None:
-        """Updates the Panel title with real-time stats."""
+        """Re-evaluates the active task count and updates the dynamic title string."""
         if not self.live or not self.progress:
             return
 
@@ -181,22 +242,32 @@ class ProgressMonitor:
         active = len(self.active_files)
 
         # Create a dynamic string
-        self.dinamic_title = f"[bold white]📥 Download Manager | [green]{self.files_completed}[/]/[blue]{self.total_files}[/] Files | [yellow]{active} Active[/]"
+        self.dynamic_title = (
+            f"[bold white][green]{self.files_completed}[/]/"
+            f"[blue]{self.total_files}[/] Files | [yellow]{active} Active[/]"
+        )
 
     def done(self, filename: str) -> None:
+        """Marks a file task as complete, hides its progress bar, and updates metrics."""
         if self.progress and filename in self.tasks:
-            # Красивый финиш в UI
             task_id = self.tasks[filename]
             self.progress.update(task_id, completed=self.progress.tasks[task_id].total, visible=False)
             del self.tasks[filename]
-            self.files_completed += 1
-            self.active_files.remove(filename)
-            self._update_panel_title()
 
-        self.log(f"[bold green]✔ Done: {filename}[/]", True)
+            if self.progress.tasks[task_id].total is not None:
+                self.files_completed += 1
+                self.log(f"✔ Done: {filename}", "INFO", progress=True)
+                self.active_files.remove(filename)
+                self._update_panel_title()
+
+        else:
+            self.log(f"✔ Done: {filename}", "INFO", progress=True)
 
     def _make_panel(self) -> Panel | str:
-        """This method now handles BOTH logic and UI creation 10x per second."""
+        """
+        Declarative rendering method called rapidly by Rich Live.
+        Evaluates global state to generate either the active downloads UI or the final report.
+        """
         if not self.progress:
             return ""
 
@@ -227,91 +298,90 @@ class ProgressMonitor:
         if self.total_bytes < 1_073_741_824:  # GB
             size_str = f"{self.download_bytes / 1024 / 1024:.2f} / {self.total_bytes / 1024 / 1024:.2f} MB"
         else:
-            size_str = f"{self.download_bytes / 1024 / 1024 / 1024:.2f} / {self.total_bytes / 1024 / 1024 / 1024:.2f} GB"
+            size_str = (
+                f"{self.download_bytes / 1024 / 1024 / 1024:.2f} /"
+                f"{self.total_bytes / 1024 / 1024 / 1024:.2f} GB"
+            )
 
+        # Trigger final report rendering if all tasks are complete
         if not self.tasks and len(self.progress.tasks) > 0:
-            # Показываем красивый финальный статус вместо пустых баров
+            grid = Table.grid(expand=True)
+            grid.add_column()
+            grid.add_column(justify="center")
+
+            content = Group("[green]✅ All downloads completed successfully!\n", grid)
+            grid.add_row("[white]Total files:", f"[green3]{len(self.progress.tasks)}[/]")
+            grid.add_row("[white]Total Data:", f"[bold cyan]{size_str}[/]")
+            grid.add_row("[white]Average Speed:", f"[bold yellow]{speed_str}[/]")
+            grid.add_row("[white]Total Time:", f"[bold magenta]{time_str}[/]")
+
             return Panel(
-                "[bold green]✅ All downloads completed successfully![/]\n"
-                f"[white]Total files:       [/][green3]{len(self.progress.tasks)}[/]\n"
-                f"[white]Total Data:   [/][bold cyan]{size_str}[/]\n"
-                f"[white]Average Speed:   [/][bold yellow]{speed_str}[/]\n"
-                f"[white]Total Time:      [/][bold magenta]{time_str}[/]",
-                title="[bold green]Final Report",
-                border_style="green",
+                content,
+                title="[#2e8b57]Final Report",
+                border_style="#2e8b57",
                 expand=False,
             )
-        dinamic_title2 = f"\nAvg: [yellow]{speed_str}[/] | Remainig Time: [green3]{remain_time_str}[/] | Time: [magenta]{time_str}[/] | Download: [bold cyan]{size_str}[/]"
-        # Если задачи еще есть — рисуем стандартную панель
+
+        dynamic_title_full = (
+            f"\nAvg: [yellow]{speed_str}[/] | Remaining Time: [green3]{remain_time_str}[/] | "
+            f"Time: [magenta]{time_str}[/] | Download: [bold cyan]{size_str}[/][/]"
+        )
+
         return Panel(
-            self.progress, title=self.dinamic_title + dinamic_title2, border_style="blue", padding=(1, 2)
+            self.progress, title=self.dynamic_title + dynamic_title_full, border_style="blue", padding=(1, 2)
         )
 
     def handle_exit(self, cancelled: bool = False) -> None:
-        """Closes the UI and logs the session end."""
+        """Closes the UI and logs the session end, generating a summary report."""
         if not self.silent:
-            self._make_panel()
             self.live.stop()
 
-        if not self.silent and cancelled:
-            # Print a bold red panel to the console after the UI stops
-            self.console.print("\n")  # Add some breathing room
-            self.console.print(
-                Panel(
-                    "[bold red]⚠️ Operation Cancelled by User[/]\n"
-                    "[dim white]Partial data may have been saved to the log file.",
-                    title="[bold red]Interrupted",
-                    border_style="red",
-                    expand=False,
-                )
-            )
+        elapsed = time.monotonic() - self.start_time
+        avg_speed = (self.download_bytes / elapsed) / 1024 / 1024 if elapsed > 0 else 0
 
-        self._write_log(
-            "--- Session Terminated (User Interrupt) ---" if cancelled else "--- Session Finished ---"
+        total_mb = self.download_bytes / 1024 / 1024
+        mins, secs = divmod(int(elapsed), 60)
+        hours, mins = divmod(mins, 60)
+        time_str = f"{hours:02d}:{mins:02d}:{secs:02d}"
+
+        status_word = "CANCELLED" if cancelled else "SUCCESS"
+
+        report = (
+            f"\n--- Final Report ({status_word}) ---\n"
+            f"Total files:   {self.total_files}\n"
+            f"Total Data:    {total_mb:.2f} MB\n"
+            f"Average Speed: {avg_speed:.2f} MB/s\n"
+            f"Total Time:    {time_str}\n"
+            f"--------------------------------"
         )
 
+        self.log(report)
+
     def start(self) -> None:
+        """Initializes the display engine and internal timers."""
         if self.progress:
             self.live.start()
         self.start_time = time.monotonic()
         self._write_log("--- Session Started ---")
 
     def stop(self) -> None:
-        if self.progress:
-            self._make_panel()
-            self.live.stop()
+        """Manually stops the monitor."""
+        self.handle_exit()
         self._write_log("--- Session Finished ---")
 
     def __enter__(self) -> Self:
         if self.progress:
             self.live.start()
         self.start_time = time.monotonic()
+        self._write_log("--- Session Started ---")
         return self
 
     def __exit__(
         self,
-        _exc_type: type[BaseException] | None,
-        _exc: BaseException | None,
-        _tb: TracebackType | None,
+        _exc_type: type[BaseException] | None = None,
+        _exc: BaseException | None = None,
+        _tb: TracebackType | None = None,
     ) -> None:
-        # If exc_type is KeyboardInterrupt, we mark it as cancelled
-        is_interrupt = _exc_type is KeyboardInterrupt
-        self.handle_exit(cancelled=is_interrupt)
-        # Returning True would suppress the exception,
-        # but usually we want to let it propagate or handle it in the main loop.
-
-
-if __name__ == "__main__":
-    filename = "my_file.none"
-    with ProgressMonitor() as monitor:
-        files: list[str] = []
-        for i in range(0, 12):
-            filename = f"filename{i!s}"
-            monitor.add_file(filename, 1_000_000)
-            files.append(filename)
-
-        for filename in files:
-            for j in range(1000, 1_000_001, 1000):
-                monitor.update(filename, 1000)
-                time.sleep(0.004)
-            monitor.done(filename)
+        is_cancelled = _exc_type in (KeyboardInterrupt, asyncio.CancelledError)
+        self.handle_exit(cancelled=is_cancelled)
+        self._write_log("--- Session Finished ---")

@@ -21,6 +21,13 @@ from .storage import StorageManager
 
 
 class NCBILoader:
+    """
+    High-performance asynchronous manager for downloading and streaming genomics data.
+
+    Implements concurrent chunk downloading, in-memory reordering for sequential streams,
+    atomic disk writes, and automatic MD5 integrity verification.
+    """
+
     _queue: asyncio.Queue[tuple[int, Chunk]]
     _stream_queue: asyncio.Queue[tuple[int, bytearray]]
     workers: list[asyncio.Task[None]]
@@ -37,8 +44,8 @@ class NCBILoader:
         http2: bool = False,
         verify: bool = False,
     ) -> None:
-
-        self.network = NetworkClient(threads=threads, http2=http2)
+        self._monitor = ProgressMonitor(silent=silent, log_file=f"{output_dir}/session.log")
+        self.network = NetworkClient(threads=threads, http2=http2, monitor=self._monitor)
         self.storage = StorageManager(output_dir=output_dir)
         self.ncbi = NCBIProvider(network=self.network)
         self.providers = NCBIProvider(self.network)
@@ -47,13 +54,12 @@ class NCBILoader:
         self._stream = None
         self._stream_buffer_size = stream_buffer_size
         self.stream_chunk_size = 5 * 1024 * 1024
-        self.MIN_CHUNK = 1024 * 1024  # 1 MB минимум
+        self.MIN_CHUNK = 1024 * 1024
         self.chunk_timeout = chunk_timeout
         self._limiter = AsyncLimiter(threads * 2, 1)
         self._semaphore = asyncio.Semaphore(threads)
         self._timeout = httpx.Timeout(timeout, read=5.0)
 
-        self._monitor = ProgressMonitor(silent=silent, log_file=f"{output_dir}/session.log")
         self._queue = asyncio.PriorityQueue()
         maxsize = stream_buffer_size // self.MIN_CHUNK if stream_buffer_size else 0
         maxsize = maxsize if maxsize > self._max_conns else self._max_conns
@@ -80,9 +86,12 @@ class NCBILoader:
     async def _add_task_producer(
         self, links: Iterable[str], expected_checksums: dict[str, str] | None = None
     ) -> None:
-        """Продюсер: Нарезает файлы и кидает в очередь"""
+        """
+        Retrieves metadata (HEAD requests) for provided URLs, initializes storage,
+        and populates the priority queue with chunk tasks.
+        """
         checksums_map = expected_checksums if isinstance(expected_checksums, dict) else {}
-        for url in links:
+        for i, url in enumerate(links):
             if not self.is_running:
                 break
 
@@ -92,33 +101,37 @@ class NCBILoader:
                 filename = url.rsplit("/", 1)[1]
                 file = None
                 total_size = 0
+
+                # Fetch metadata
                 response = await self.network.safe_request("Head", url=url)
 
                 if response is None:
-                    # Если мы исчерпали 3 попытки ИЛИ словили 404, идем к следующему URL
+                    self._monitor.log(f"Skipping {filename} due to unreachable remote.", status="ERROR")
                     continue
 
                 total_size = int(response.headers.get("content-length", 0))
 
                 if total_size <= 0:
-                    raise ValueError(f"content-length: {total_size}")
+                    self._monitor.log(f"Invalid Content-Length ({total_size}) for {filename}", status="ERROR")
+                    continue
 
+                # Auto-fetch MD5 if missing
                 if not md5_val:
+                    self._monitor.add_file(filename)
                     md5_val = await self.providers.get_expected_hash(url, filename)
+                    self._monitor.done(filename)
 
-                # 1. Попытка восстановления
+                # 1. State Recovery
                 if not self._stream:
                     file = self.storage.load_state(filename=filename)
 
-                # Логика нарезки
+                # 2. Chunk geometry calculation
                 parts = self._max_conns
                 chunk_size = max(total_size // parts, self.MIN_CHUNK)
-
                 if self._stream and chunk_size > self.stream_chunk_size:
                     chunk_size = self.stream_chunk_size
 
-                # 2. Если не восстановили - создаем с нуля
-
+                # 3. File object creation
                 if not file:
                     if not self._stream:
                         self.storage.create_sparse_file(filename=filename, size=total_size)
@@ -134,7 +147,7 @@ class NCBILoader:
                 if not self._stream:
                     file.fd = self.storage.open_file(filename=filename)
 
-                # 3. Регистрируем в UI и памяти
+                # UI Registration
                 self.files[filename] = file
                 chunks = file.chunks or []
 
@@ -144,39 +157,55 @@ class NCBILoader:
                     if downloaded - len(chunks) > 0:
                         self._monitor.update(filename, downloaded)
 
-                # 4. Кидаем в очередь (самое важное)
+                # 4. Dispatch tasks to queue
                 for c in chunks:
                     if not self.is_running:
                         break
                     if c.current_pos <= c.end:
-                        await self._queue.put((10, c))
+                        await self._queue.put((i, c))
 
+            except asyncio.CancelledError:
+                break
             except Exception as e:
-                self._monitor.log(f"[red]Ошибка обработки {url}: {e}[/]")
-                raise
+                self._monitor.log(f"Failed to process URL {url}: {e}", status="ERROR")
+                # Do not raise here; allow the producer to move to the next URL
 
     async def _download_worker(self) -> None:
+        """
+        Background worker that consumes chunks from the queue, downloads data,
+        and triggers integrity checks upon file completion.
+        """
         while self.is_running:
             chunk = None
             try:
                 _, chunk = await self._queue.get()
+
+                # Stream backpressure: wait for the current file to be completely consumed
                 if self._stream and self.current_file != chunk.filename:
                     async with self.condition:
-                        await self.condition.wait_for(lambda: self.current_file not in self.files)
+                        await self.condition.wait_for(
+                            lambda c=chunk.filename: (
+                                getattr(self, "current_file", None) == c or not self.is_running
+                            )
+                        )
+
                 await self._process_chunk(chunk)
-                # --- ЛОГИКА МОМЕНТАЛЬНОЙ ПРОВЕРКИ ---
-                if not self._stream:  # Только для режима RUN (диск)
+
+                # Integrity check trigger for disk mode
+                if not self._stream:
                     filename = chunk.filename
                     file_obj = self.files.get(filename)
-                    # Если файл готов И у него есть хеш для проверки И мы его еще не проверяли
+
                     if file_obj and file_obj.is_complete:
                         if file_obj.expected_md5 and not file_obj.verified:
-                            # Ставим флаг, чтобы другой воркер не запустил проверку повторно
                             file_obj.verified = True
-                            # Запускаем проверку в фоне!
-                            self._monitor.log(f"[*] Проверка MD5 для {filename}...", True)
-                            self.storage.verify_file_hash(file_obj)
-                            self._monitor.log(f"[green]MD5 Verified: {filename}[/]", True)
+                            self._monitor.log(f"Verifying MD5 checksum for {filename}...", status="INFO")
+                            try:
+                                self.storage.verify_file_hash(file_obj)
+                                self._monitor.log(f"Integrity confirmed: {filename}", status="SUCCESS")
+                            except ValueError as ve:
+                                self._monitor.log(str(ve), status="ERROR")
+                                # Optional: Add logic to quarantine/delete corrupted files here
 
                         file_obj.close_fd()
                         self.storage.verify_size(file_obj)
@@ -184,18 +213,20 @@ class NCBILoader:
                         self._monitor.done(filename)
                         self._queue.task_done()
                         del self.files[filename]
+
                         if not self.files:
                             async with self.condition:
                                 self.condition.notify_all()
                 # ------------------------------------
             except asyncio.CancelledError:
                 self._queue.task_done()
-                break
+                break  # Worker shutdown requested
             except Exception:
                 if self.is_running and chunk:
-                    # Мягкий ретрай
+                    # Exponential or fixed backoff for chunk retry
                     await asyncio.sleep(2)
-                    await self._queue.put((1, chunk))
+                    # Re-queue with high priority (1)
+                    await self._queue.put((-1, chunk))
                     self._queue.task_done()
 
     async def _process_chunk(self, chunk: Chunk) -> None:
@@ -250,32 +281,31 @@ class NCBILoader:
         await self.storage.write_chunk_data(fd, data, chunk.current_pos)
         chunk.current_pos += len(data)
 
-    async def stop(self, complete: bool = False) -> None:
-        """Этот метод вызывается по Ctrl+C"""
-
+    async def _stop(self, complete: bool = False) -> None:
+        """
+        Executes a graceful shutdown sequence.
+        Cancels active tasks and flushes deadlocked queues using poison pills.
+        """
         if not self.is_running:
-            return  # Защита от двойного вызова
+            return
+
         self.is_running = False
+
         if not complete:
-            self._monitor.log("[yellow]Получен сигнал остановки...[/]", progress=True)
-        # 1. Останавливаем Продюсеров (чтобы не кидали новое)
+            self._monitor.log(
+                "Interrupt signal received. Initiating graceful shutdown...", status="INTERRUPT"
+            )
+
         if self.task_creator:
             self.task_creator.cancel()
         if self.autosave_task:
             self.autosave_task.cancel()
 
-        # 2. Отменяем Воркеров (они выйдут из while и вызовут task_done для своих задач)
         for worker in self.workers:
             if worker and not worker.done():
                 worker.cancel()
 
-        while not self._queue.empty():
-            try:
-                self._queue.get_nowait()
-                self._queue.task_done()
-            except asyncio.QueueEmpty:
-                break
-
+        # Inject Poison Pill to terminate stream consumer
         if self._stream:
             with contextlib.suppress(asyncio.QueueFull):
                 self._stream_queue.put_nowait((-1, bytearray()))
@@ -287,11 +317,17 @@ class NCBILoader:
         links: Iterable[str] | str,
         expected_checksums: dict[str, str] | None = None,
     ) -> AsyncGenerator[tuple[str, AsyncGenerator[bytes]]]:
+        """
+        Orchestrates sequential streaming of multiple files.
+        Manages the lifecycle of producers and workers, yielding a separate
+        byte generator for each file.
+        """
 
         self._stream = True
         if isinstance(links, str):
             links = [links]
         loop = asyncio.get_running_loop()
+        # Graceful shutdown handler
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
 
@@ -299,28 +335,20 @@ class NCBILoader:
         self.workers = [asyncio.create_task(self._download_worker()) for _ in range(self._max_conns)]
 
         try:
-            # 2. MAIN LOOP (Обработка файлов по очереди)
-            # Мы не итерируемся по links здесь, потому что producer уже накидал их в File state
-            # Нам нужно знать порядок. Либо producer сохраняет порядок в отдельный список,
-            # либо мы итерируемся по links снова.
             for url in links:
                 if not self.is_running:
                     break
                 filename = url.rsplit("/", 1)[1]
 
-                # Ждем, пока файл появится в системе (Producer его обработает)
-                # Тут нужна синхронизация, если Producer отстает.
+                # Wait for the producer to discover and register the file
                 while filename not in self.files:
                     if self.task_creator.done():
-                        # Если продюсер умер, а файла нет - беда
                         break
                     await asyncio.sleep(0.1)
 
                 if filename not in self.files:
                     continue
 
-                # Создаем внутренний генератор для ОДНОГО файла
-                # Он предполагает, что воркеры уже работают
                 file_gen = self._stream_one(filename)
 
                 yield filename, file_gen
@@ -332,51 +360,54 @@ class NCBILoader:
         except asyncio.CancelledError:
             pass
 
+        except Exception as e:
+            # Catching unexpected runtime exceptions (e.g. disk full, OS errors)
+            self._monitor.log(f"Runtime Exception in run(): {e}", status="CRITICAL")
+            raise
+
         finally:
-            # 3. TEARDOWN (Очистка)
+            await self._stop(complete=True)
+
+            await asyncio.gather(self.task_creator, *self.workers, return_exceptions=True)
+
             if self.is_running:
-                self._monitor.log("[green]Все загрузки завершены![/]")
-            await self.stop(complete=True)  # Флаг вниз
+                self._monitor.log("All downloads completed successfully!", status="SUCCESS", progress=True)
 
-            if self.task_creator:
-                self.task_creator.cancel()
-
-            for w in self.workers:
-                w.cancel()
-
-            # Ждем пока все умрут
-            await asyncio.gather(*self.workers, return_exceptions=True)
-            if self.task_creator:
-                await asyncio.gather(self.task_creator, return_exceptions=True)
-
-            # Чистим очереди
-            while not self._queue.empty():
-                self._queue.get_nowait()
-                self._queue.task_done()
-
-            # Закрываем клиент
             await self.network.close()
 
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.remove_signal_handler(sig)
 
     async def _stream_one(self, filename: str) -> AsyncGenerator[bytes]:
+        """
+        Internal generator that reorders downloaded chunks from the queue
+        into a sequential byte stream.
+        """
         self.current_file = filename
+
+        # WAKE UP WORKERS: Tell them it's time to process this file!
+        async with self.condition:
+            self.condition.notify_all()
+
         file_obj = self.files[filename]
         total_size = file_obj.content_length
         expected_checksum = file_obj.expected_md5
         md5_hasher = hashlib.md5() if expected_checksum else None
+
         next_offset = 0
-        self._monitor.log(f"Streaming: {filename}")
+        self._monitor.log(f"Streaming: {filename}", "INFO")
         try:
             while next_offset < total_size:
                 # 1. Если в куче уже есть следующий кусок - отдаем его
                 if not self.is_running:
                     break
+
+                # 1. Check if the next sequential chunk is already in the heap
                 if self.heap and self.heap[0][0] == next_offset:
                     _, chunk_data = heapq.heappop(self.heap)
                     chunk_bytes = bytes(chunk_data)
 
+                    # We freed up heap space, notify the producer
                     async with self.condition:
                         self.condition.notify()
 
@@ -389,12 +420,12 @@ class NCBILoader:
                     next_offset += lenght
                     continue
 
-                # 2. Если куча пуста или там лежат "далекие" куски - ждем новых
+                # 2. Wait for incoming chunks from workers
                 chunk_start, chunk_data = await self._stream_queue.get()
                 if chunk_start == -1:
                     break
 
-                # 3. Пришел кусок. Это тот, который мы ждем?
+                # 3. Process incoming chunk
                 if chunk_start == next_offset:
                     chunk_bytes = bytes(chunk_data)
 
@@ -406,44 +437,42 @@ class NCBILoader:
                     lenght = len(chunk_bytes)
                     next_offset += lenght
                 else:
-                    # Это кусок из будущего. Сохраняем в кучу.
-                    # (Внимание: тут может закончиться память, если "первый" кусок завис!)
-
+                    # Chunk is out of order, store it in the heap
                     heapq.heappush(self.heap, (chunk_start, chunk_data))
             else:
                 self._monitor.done(filename)
-                # ПРОВЕРКА ЦЕЛОСТНОСТИ
+
                 if md5_hasher and expected_checksum:
                     try:
                         self.storage.verify_stream(md5_hasher, expected_checksum, next_offset, total_size)
                         if self._monitor:
-                            self._monitor.log("[green]MD5 Verified[/]", True)
+                            self._monitor.log("MD5 Verified", status="SUCCESS", progress=True)
                     except Exception as e:
-                        self._monitor.log(f"[bold red]{e}[/]")
+                        self._monitor.log(str(e), status="ERROR")
                         raise
 
         finally:
+            # Cleanup and notify stream_all that we are done
             del self.files[filename]
-            async with self.condition:
-                self.condition.notify_all()
-            await asyncio.sleep(1)
 
     async def run(
         self,
         links: str | Iterable[str],
         expected_checksums: dict[str, str] | None = None,
     ) -> None:
+        """
+        Executes the download pipeline, writing data directly to disk.
+        """
         self._stream = False
         if isinstance(links, str):
             links = [links]
+
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
 
-        # 1. Запускаем фоновые задачи
         self.task_creator = asyncio.create_task(self._add_task_producer(links, expected_checksums))
         self.autosave_task = asyncio.create_task(self._autosave())
-
         self.workers = [asyncio.create_task(self._download_worker()) for _ in range(self._max_conns)]
 
         try:
@@ -452,17 +481,21 @@ class NCBILoader:
                 await self.condition.wait_for(lambda: not (self.files and self.is_running))
 
             if self.is_running:
-                self._monitor.log("[green]Все загрузки завершены![/]", progress=True)
+                self._monitor.log("All downloads completed successfully!", status="SUCCESS", progress=True)
 
         except asyncio.CancelledError:
             pass
 
+        except Exception as e:
+            # Catching unexpected runtime exceptions (e.g. disk full, OS errors)
+            self._monitor.log(f"Runtime Exception in run(): {e}", status="CRITICAL")
+            raise
+
         finally:
-            await self.stop(complete=True)
+            await self._stop(complete=True)
 
-            await asyncio.gather(self.task_creator, return_exceptions=True)
+            await asyncio.gather(self.task_creator, self.autosave_task, *self.workers, return_exceptions=True)
 
-            # Финальное сохранение
             self.storage.save_all_states(self.files)
             await self.network.close()
 
@@ -471,6 +504,14 @@ class NCBILoader:
 
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.remove_signal_handler(sig)
+
+    async def start(self) -> Self:
+        self._monitor.start()
+        return self
+
+    async def stop(self) -> None:
+        await self._stop()
+        self._monitor.stop()
 
     async def __aenter__(self) -> Self:
         self._monitor.start()
