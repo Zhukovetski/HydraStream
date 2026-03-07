@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import hashlib
 import heapq
+import random
 import signal
 from collections.abc import AsyncGenerator, Iterable
 from types import TracebackType
@@ -71,9 +72,7 @@ class NCBILoader:
         self.workers = []
         self.task_creator = None
         self.autosave_task = None
-
         self.current_file = ""
-        self.prev_file = ""
 
     async def _autosave(self) -> None:
         while self.is_running:
@@ -224,8 +223,8 @@ class NCBILoader:
             except Exception:
                 if self.is_running and chunk:
                     # Exponential or fixed backoff for chunk retry
-                    await asyncio.sleep(2)
-                    # Re-queue with high priority (1)
+                    await asyncio.sleep(random.uniform(0, 2))
+                    # Re-queue with high priority (-1)
                     await self._queue.put((-1, chunk))
                     self._queue.task_done()
 
@@ -244,7 +243,7 @@ class NCBILoader:
                         fd = self.files[chunk.filename].fd
                         if fd is None:
                             fd = self.storage.open_file(chunk.filename)
-                        buffer_size = 1024 * 1024  # 1 MB
+                        buffer_size = 1024 * 1024
                         try:
                             async for data in r.aiter_bytes():
                                 downloaded_in_this_attempt += len(data)
@@ -395,7 +394,7 @@ class NCBILoader:
         md5_hasher = hashlib.md5() if expected_checksum else None
 
         next_offset = 0
-        self._monitor.log(f"Streaming: {filename}", "INFO")
+        self._monitor.log(f"Streaming: {filename}", status="INFO")
         try:
             while next_offset < total_size:
                 # 1. Если в куче уже есть следующий кусок - отдаем его

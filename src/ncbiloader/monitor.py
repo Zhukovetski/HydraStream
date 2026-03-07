@@ -25,6 +25,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from rich.progress_bar import ProgressBar
+from rich.rule import Rule
 from rich.table import Column, Table
 from rich.text import Text
 
@@ -110,10 +111,11 @@ class ProgressMonitor:
         self.total_bytes = 0
         self.download_bytes = 0
         self.tasks: dict[str, TaskID] = {}
-        self.dynamic_title = ""
+        self._dynamic_title = ""
         self.total_files = 0
         self.active_files: set[str] = set()
         self.files_completed = 0
+        self._date_printed = False
 
         if not self.silent:
             self.progress = Progress(
@@ -156,6 +158,13 @@ class ProgressMonitor:
             status (STATUS): Severity level dictating UI formatting.
             progress (bool): If True, forces display in the UI even if it's an INFO message.
         """
+        if not getattr(self, "_date_printed", False):
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            date_header = f"[bold cyan]📅 Date: {current_date}[/]"
+
+            self.console.print(Rule(date_header))
+            self._write_log(f"--- {current_date} ---")
+            self._date_printed = True
 
         timestamp = datetime.now().strftime("[%H:%M:%S]")
         formatted_msg = f"{timestamp} {message}"
@@ -242,7 +251,7 @@ class ProgressMonitor:
         active = len(self.active_files)
 
         # Create a dynamic string
-        self.dynamic_title = (
+        self._dynamic_title = (
             f"[bold white][green]{self.files_completed}[/]/"
             f"[blue]{self.total_files}[/] Files | [yellow]{active} Active[/]"
         )
@@ -256,12 +265,12 @@ class ProgressMonitor:
 
             if self.progress.tasks[task_id].total is not None:
                 self.files_completed += 1
-                self.log(f"✔ Done: {filename}", "INFO", progress=True)
+                self.log(f"Done: {filename}", status="SUCCESS", progress=True)
                 self.active_files.remove(filename)
                 self._update_panel_title()
 
         else:
-            self.log(f"✔ Done: {filename}", "INFO", progress=True)
+            self.log(f"Done: {filename}", status="SUCCESS", progress=True)
 
     def _make_panel(self) -> Panel | str:
         """
@@ -310,7 +319,7 @@ class ProgressMonitor:
             grid.add_column(justify="center")
 
             content = Group("[green]✅ All downloads completed successfully!\n", grid)
-            grid.add_row("[white]Total files:", f"[green3]{len(self.progress.tasks)}[/]")
+            grid.add_row("[white]Total files:", f"[green3]{self.total_files}[/]")
             grid.add_row("[white]Total Data:", f"[bold cyan]{size_str}[/]")
             grid.add_row("[white]Average Speed:", f"[bold yellow]{speed_str}[/]")
             grid.add_row("[white]Total Time:", f"[bold magenta]{time_str}[/]")
@@ -328,7 +337,7 @@ class ProgressMonitor:
         )
 
         return Panel(
-            self.progress, title=self.dynamic_title + dynamic_title_full, border_style="blue", padding=(1, 2)
+            self.progress, title=self._dynamic_title + dynamic_title_full, border_style="blue", padding=(1, 2)
         )
 
     def handle_exit(self, cancelled: bool = False) -> None:
