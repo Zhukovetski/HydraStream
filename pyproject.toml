@@ -1,8 +1,8 @@
 [project]
-name = "ncbiloader"
+name = "hydrastream"
 version = "0.1.0"
 license = {text = "MIT"}
-description = "High-performance asynchronous downloader for NCBI datasets using HTTP/2 and in-memory streaming."
+description = "A high-performance, fault-tolerant, and streaming-capable async downloader."
 authors = [
     { name = "Valentin Zhukovetski", email = "zukovetski@gmail.com" }
 ]
@@ -39,7 +39,7 @@ dev = [
 ]
 
 [project.scripts]
-ncbiloader = "ncbiloader.main:app"
+hydrastream = "hydrastream.main:app"
 
 
 [tool.uv]
@@ -52,7 +52,7 @@ where = ["src"]
 "" = "src"
 
 [tool.uv.sources]
-ncbiloader = { workspace = true }
+hydrastream = { workspace = true }
 
 [tool.ruff]
 # Указываем Ruff, где искать исходники для корректной сортировки импортов

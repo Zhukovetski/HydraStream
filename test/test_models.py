@@ -1,4 +1,4 @@
-from ncbiloader.models import Chunk, File
+from hydrastream.models import Chunk, File
 
 
 def test_chunk_properties() -> None:
@@ -17,7 +17,10 @@ def test_chunk_properties() -> None:
 def test_file_chunk_generation() -> None:
     """We check that the file cuts itself into pieces correctly"""
     file_obj = File(
-        filename="genome.fna", url="http://example.com/genome.fna", content_length=105, chunk_size=50
+        filename="genome.fna",
+        url="http://example.com/genome.fna",
+        content_length=105,
+        chunk_size=50,
     )
 
     # 105 bytes of 50 bytes = 3 chunks (50, 50, 5)
@@ -48,7 +51,10 @@ def test_to_json_in_json() -> None:
     chunk_size = 50
 
     file_obj = File(
-        filename="test.txt", url="http://fake.url", content_length=total_size, chunk_size=chunk_size
+        filename="test.txt",
+        url="http://fake.url",
+        content_length=total_size,
+        chunk_size=chunk_size,
     )
 
     test_obj = File.from_json(file_obj.to_json())

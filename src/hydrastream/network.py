@@ -31,7 +31,7 @@ from httpx._types import (
     TimeoutTypes,
 )
 
-from ncbiloader.monitor import ProgressMonitor
+from hydrastream.monitor import ProgressMonitor
 
 
 class HttpxClientOptions(TypedDict, total=False):
@@ -183,7 +183,7 @@ class NetworkClient:
         user_headers = options.pop("headers", None)
         headers_obj = httpx.Headers(user_headers)
         headers_obj.setdefault("Accept-Encoding", "identity")
-        headers_obj.setdefault("User-Agent", "NCBILoader/1.0")
+        headers_obj.setdefault("User-Agent", "HydraStream/1.0")
 
         calc_limits = httpx.Limits(
             max_connections=math.ceil(threads * 1.1), max_keepalive_connections=threads, keepalive_expiry=4.5

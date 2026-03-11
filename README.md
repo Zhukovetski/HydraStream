@@ -1,11 +1,11 @@
-# 🧬 NCBI Async Downloader
+# 🐉 HydraStream
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://github.com/Zhukovetski/NCBI-Async-Downloader/actions/workflows/tests.yml/badge.svg)](https://github.com/Zhukovetski/NCBI-Async-Downloader/actions/workflows/tests.yml)
+[![Tests](https://github.com/Zhukovetski/HydraStream/actions/workflows/tests.yml/badge.svg)](https://github.com/Zhukovetski/HydraStream/actions/workflows/tests.yml)
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/95330961-9470-462d-a50f-cf1427d0cc2a" alt="NCBI Downloader Demo" width="800">
+  <img src="https://github.com/user-attachments/assets/95330961-9470-462d-a50f-cf1427d0cc2a" alt="HydraStream Demo" width="800">
 </p>
 
 A high-performance, fault-tolerant, and streaming-capable downloader for genomics datasets (NCBI, EBI, etc.). Built with pure Python, `asyncio`, and `httpx`.
@@ -14,7 +14,7 @@ A high-performance, fault-tolerant, and streaming-capable downloader for genomic
 
 **The Problem:** Standard tools like `wget` or `curl` use single TCP connections, resulting in extremely slow downloads for 100GB+ genomic files. IBM Aspera Connect is fast but requires proprietary clients, UDP port exceptions, and often gets blocked by corporate firewalls. Moreover, processing these files usually requires downloading them to disk first, leading to massive I/O bottlenecks.
 
-**The Solution:** `NCBI-Async-Downloader` utilizes HTTP/2 multiplexing, concurrent chunk downloading, and intelligent rate limiting to max out your bandwidth over standard HTTPS (port 443). **Its killer feature is the Sequential Reordering Buffer**, which allows you to stream multi-threaded downloads directly into Unix pipelines (`stdout`) without touching the disk.
+**The Solution:** `HydraStream` utilizes HTTP/2 multiplexing, concurrent chunk downloading, and intelligent rate limiting to max out your bandwidth over standard HTTPS (port 443). **Its killer feature is the Sequential Reordering Buffer**, which allows you to stream multi-threaded downloads directly into Unix pipelines (`stdout`) without touching the disk.
 
 ---
 
@@ -42,15 +42,15 @@ Currently, you can run it directly from the source. It is recommended to use `uv
 
 ```bash
 # Recommended: Install globally via uv tool
-uv tool install git+https://github.com/Zhukovetski/NCBI-Async-Downloader.git
+uv tool install git+https://github.com/Zhukovetski/HydraStream.git
 
 # Or via pipx
-pipx install git+https://github.com/Zhukovetski/NCBI-Async-Downloader.git
+pipx install git+https://github.com/Zhukovetski/HydraStream.git
 ```
 
-After installation, you can use the `ncbiloader` command directly from anywhere in your terminal:
+After installation, you can use the `hydrastream` command directly from anywhere in your terminal:
 ```bash
-ncbiloader "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
+hydrastream "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
 ```
 
 ---
@@ -60,7 +60,7 @@ ncbiloader "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./dat
 ### 1. Basic Download (Disk Mode)
 Download a file using 20 concurrent connections:
 ```bash
-ncbiloader "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
+hydrastream "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
 ```
 *(If you hit `Ctrl+C`, the state is saved. Rerunning the exact command will resume the download from the exact byte).*
 
@@ -68,7 +68,7 @@ ncbiloader "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./dat
 Download a compressed genome, decompress it in memory, and count the sequences—**without saving the archive to your hard drive**:
 
 ```bash
-ncbiloader "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --stream --quiet | zcat | grep -c "^>"
+hydrastream "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --stream --quiet | zcat | grep -c "^>"
 ```
 
 ### 3. Use as a Python Library (For Data Science / ML)
@@ -76,12 +76,12 @@ You can embed the loader into your PyTorch/Pandas pipelines using the asynchrono
 
 ```python
 import asyncio
-from ncbiloader import NCBILoader
+from hydrastream import HydraStream
 
 async def main():
     urls =["https://url1.gz", "https://url2.gz"]
 
-    async with NCBILoader(threads=10, quiet=True) as loader:
+    async with HydraStream(threads=10, quiet=True) as loader:
         async for filename, stream in loader.stream_all(urls):
             print(f"Processing {filename}...")
             async for chunk_bytes in stream:
@@ -117,4 +117,3 @@ For those interested in System Design, this tool implements:
 ---
 ## License
 MIT License. Feel free to use, modify, and distribute.
-```

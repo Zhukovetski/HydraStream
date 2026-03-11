@@ -18,7 +18,7 @@ from .providers import ProviderRouter
 from .storage import StorageManager
 
 
-class NCBILoader:
+class HydraStream:
     """
     High-performance asynchronous manager for downloading and streaming genomics data.
 

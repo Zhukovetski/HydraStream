@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from ncbiloader import NCBILoader
+from hydrastream import HydraStream
 
 # Initialize Typer app with disabled completion and auto-help on empty run
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -48,7 +48,7 @@ async def async_main(
             "Warning: The --md5 flag is ignored when multiple URLs are provided.", fg="yellow", err=True
         )
 
-    async with NCBILoader(
+    async with HydraStream(
         threads=threads,
         no_ui=no_ui,
         quiet=quiet,
@@ -133,7 +133,7 @@ def cli(
     ] = None,
 ) -> None:
     """
-    NCBI Async Downloader: A high-performance, asynchronous genomics data downloader.
+    HydraStream: A high-performance, asynchronous genomics data downloader.
 
     Optimized for fetching massive datasets from NCBI/EBI with in-memory streaming
     capabilities, concurrent connections, and robust error recovery.
