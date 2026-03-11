@@ -305,7 +305,7 @@ class ProgressMonitor:
         else:
             if self._buffer.get(filename, 0):
                 self.files_completed += 1
-            await self.log(f"Done: {filename}", status="SUCCESS", progress=True)
+                await self.log(f"Done: {filename}", status="SUCCESS", progress=True)
 
     def _make_panel(self) -> Panel | str:
         """
@@ -390,7 +390,7 @@ class ProgressMonitor:
         hours, mins = divmod(mins, 60)
         time_str = f"{hours:02d}:{mins:02d}:{secs:02d}"
 
-        status_word = "CANCELLED" if cancelled else "SUCCESS"
+        status_word = "CANCELLED" if cancelled or not self.is_running else "SUCCESS"
 
         report = (
             f"\n--- Final Report ({status_word}) ---\n"

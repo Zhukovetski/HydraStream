@@ -33,6 +33,7 @@ dev = [
     "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
     "respx>=0.22.0",
     "ruff>=0.15.1",
 ]
@@ -114,13 +115,17 @@ max-complexity = 10 # Порог сложности функции (C901)
 
 [tool.pyright]
 include = ["src"]
-# Указываем venv, чтобы Pyright видел установленные библиотеки
+ignore = ["test"]
+
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"
 
 executionEnvironments = [
-    # Путь должен быть "src/test", так как папка внутри src
     { root = "src/test", reportPrivateUsage = "none" },
     { root = "src" }
 ]
+
+[pytest]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

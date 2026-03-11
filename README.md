@@ -2,6 +2,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Tests](https://github.com/Zhukovetski/NCBI-Async-Downloader/actions/workflows/tests.yml/badge.svg)](https://github.com/Zhukovetski/NCBI-Async-Downloader/actions/workflows/tests.yml)
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/95330961-9470-462d-a50f-cf1427d0cc2a" alt="NCBI Downloader Demo" width="800">
@@ -27,10 +28,11 @@ A high-performance, fault-tolerant, and streaming-capable downloader for genomic
   * **Partial Chunk Commits:** If a connection drops, it saves the exact byte offset. You never lose progress.
 * 🧬 **Bioinformatics Ready:** Automatically locates `md5checksums.txt` on NCBI FTP servers and performs on-the-fly or post-download integrity validation.
 * 💾 **Atomic Writes:** Uses low-level `os.pwrite` to prevent Global Interpreter Lock (GIL) bottlenecks and race conditions during disk I/O.
-* 📊 **Adaptive CLI:**
+* 📊 **Adaptive & Pipe-Safe CLI:**
+  All UI and logs are strictly routed to `stderr`, meaning **every mode is 100% safe for Unix pipelines** (`stdout` is reserved strictly for binary data streams).
   * **Default:** Beautiful, dynamic UI powered by `Rich` (gradients, global ETA).
-  * `--no-ui`: Plain text logs for CI/CD and Docker environments.
-  * `--quiet`: Strict POSIX compliance (stderr for logs, stdout for binary data streams).
+  * `--no-ui`: Plain text logs. Perfect for CI/CD, Docker, and log parsers.
+  * `--quiet`: Dead silence in the console. Ideal for strict background cron jobs (logs are still saved to disk).
 
 ---
 

@@ -172,7 +172,7 @@ class NetworkClient:
         self,
         threads: int,
         monitor: ProgressMonitor,
-        client_kwargs: dict[str, Any] | None,
+        client_kwargs: dict[str, Any] | None = None,
     ) -> None:
 
         self.monitor = monitor

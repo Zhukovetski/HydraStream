@@ -323,8 +323,11 @@ class NCBILoader:
         if self._stream:
             with contextlib.suppress(asyncio.QueueFull):
                 self._stream_queue.put_nowait((-1, bytearray()))
+
         async with self.condition:
             self.condition.notify_all()
+
+        self._monitor.is_running = False
 
     async def stream_all(
         self,
@@ -343,7 +346,7 @@ class NCBILoader:
         loop = asyncio.get_running_loop()
         # Graceful shutdown handler
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(self._stop()))
 
         self.task_creator = asyncio.create_task(self._add_task_producer(links, expected_checksums))
         self.workers = [asyncio.create_task(self._download_worker()) for _ in range(self._max_conns)]
@@ -480,7 +483,7 @@ class NCBILoader:
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(self._stop()))
 
         self.task_creator = asyncio.create_task(self._add_task_producer(links, expected_checksums))
         self.autosave_task = asyncio.create_task(self._autosave())

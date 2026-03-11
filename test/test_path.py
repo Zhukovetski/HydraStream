@@ -2,9 +2,8 @@ from ncbiloader.loader import NCBILoader
 
 
 def test_loader_creates_directories(tmp_path: str) -> None:
-    """Проверяем, что лоадер правильно создает структуру папок"""
+    """We check that the loader creates the folder structure correctly"""
 
-    # tmp_path - это объект Path временной папки (напр. /tmp/pytest_1/)
     loader = NCBILoader(output_dir=str(tmp_path), quiet=True)
 
     assert loader.storage.out_dir.exists()
