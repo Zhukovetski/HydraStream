@@ -8,49 +8,45 @@
   <img src="https://github.com/user-attachments/assets/95330961-9470-462d-a50f-cf1427d0cc2a" alt="HydraStream Demo" width="800">
 </p>
 
-A high-performance, fault-tolerant, and streaming-capable downloader for genomics datasets (NCBI, EBI, etc.). Built with pure Python, `asyncio`, and `httpx`.
+A high-performance, fault-tolerant, and streaming-capable downloader for Big Data. Built with pure Python, `uvloop`, and `httpx`.
 
 ## 💡 The Problem vs. The Solution
 
-**The Problem:** Standard tools like `wget` or `curl` use single TCP connections, resulting in extremely slow downloads for 100GB+ genomic files. IBM Aspera Connect is fast but requires proprietary clients, UDP port exceptions, and often gets blocked by corporate firewalls. Moreover, processing these files usually requires downloading them to disk first, leading to massive I/O bottlenecks.
+**The Problem:** Downloading massive datasets (ML weights, DB dumps, genomic sequences) using standard tools like `wget` or `curl` is slow due to single-connection limits. Furthermore, processing these huge files usually requires saving them to disk first, creating severe I/O bottlenecks and requiring massive storage.
 
-**The Solution:** `HydraStream` utilizes HTTP/2 multiplexing, concurrent chunk downloading, and intelligent rate limiting to max out your bandwidth over standard HTTPS (port 443). **Its killer feature is the Sequential Reordering Buffer**, which allows you to stream multi-threaded downloads directly into Unix pipelines (`stdout`) without touching the disk.
+**The Solution:** `HydraStream` acts like a multi-headed beast. It utilizes HTTP/2 multiplexing and concurrent chunk downloading to max out your bandwidth. **Its killer feature is the Sequential Reordering Buffer**, which instantly converts chaotic, multi-threaded downloads into a strict sequential byte stream, allowing you to pipe terabytes of data directly into other tools without ever touching your hard drive.
 
 ---
 
 ## ✨ Key Features
-
-* 🚀 **Maximized Throughput:** Concurrent chunk downloading using `uvloop` and `httpx`.
-* 🌊 **True In-Memory Streaming:** Downloads chunks asynchronously but yields them sequentially. Pipe terabytes of data directly into bioinformatics tools (zero disk I/O).
-* 🛡️ **Bulletproof Reliability:**
+* 🚀 **Maximized Throughput:** Concurrent chunk downloading using `uvloop`.
+* 🌊 **True In-Memory Streaming:** Downloads chunks asynchronously but yields them sequentially. Pipe data directly into parsers or Unix tools (zero disk I/O).
+* 🛡️ **Bulletproof Reliability (The Hydra):**
   * **AIMD Rate Limiting & Circuit Breaker** to prevent IP bans.
   * **Exponential Backoff + Full Jitter** for network drops.
   * **Partial Chunk Commits:** If a connection drops, it saves the exact byte offset. You never lose progress.
-* 🧬 **Bioinformatics Ready:** Automatically locates `md5checksums.txt` on NCBI FTP servers and performs on-the-fly or post-download integrity validation.
-* 💾 **Atomic Writes:** Uses low-level `os.pwrite` to prevent Global Interpreter Lock (GIL) bottlenecks and race conditions during disk I/O.
-* 📊 **Adaptive & Pipe-Safe CLI:**
-  All UI and logs are strictly routed to `stderr`, meaning **every mode is 100% safe for Unix pipelines** (`stdout` is reserved strictly for binary data streams).
-  * **Default:** Beautiful, dynamic UI powered by `Rich` (gradients, global ETA).
-  * `--no-ui`: Plain text logs. Perfect for CI/CD, Docker, and log parsers.
-  * `--quiet`: Dead silence in the console. Ideal for strict background cron jobs (logs are still saved to disk).
+* 🧩 **Smart Integrity Validation:** Automatically extracts and verifies MD5 checksums from AWS S3 (`ETag`), Google Cloud (`x-goog-hash`), standard HTTP headers, and NCBI provider files.
+* 💾 **Atomic Writes:** Uses low-level `os.pwrite` to prevent Global Interpreter Lock (GIL) bottlenecks during disk I/O.
+* 📊 **Adaptive UI:**
+  * **Default:** Beautiful, dynamic terminal UI powered by `Rich`.
+  * `-nu / --no-ui`: Plain text logs for CI/CD environments.
+  * `-q / --quiet`: Strict POSIX compliance (stderr for logs, stdout for data streams).
 
 ---
 
 ## 🛠 Installation
 
-Currently, you can run it directly from the source. It is recommended to use `uv` or `poetry`.
+Requires Python 3.11+. Install globally using `uv` (recommended) or `pipx`:
 
 ```bash
-# Recommended: Install globally via uv tool
 uv tool install git+https://github.com/Zhukovetski/HydraStream.git
 
-# Or via pipx
 pipx install git+https://github.com/Zhukovetski/HydraStream.git
 ```
 
 After installation, you can use the `hydrastream` command directly from anywhere in your terminal:
 ```bash
-hydrastream "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
+hs "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
 ```
 
 ---
@@ -60,19 +56,19 @@ hydrastream "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./da
 ### 1. Basic Download (Disk Mode)
 Download a file using 20 concurrent connections:
 ```bash
-hydrastream "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
+hs "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
 ```
-*(If you hit `Ctrl+C`, the state is saved. Rerunning the exact command will resume the download from the exact byte).*
+*(If interrupted, rerun the exact command to resume from the last saved byte).*
 
 ### 2. Unix Pipeline Streaming (The Killer Feature) 💥
-Download a compressed genome, decompress it in memory, and count the sequences—**without saving the archive to your hard drive**:
+Download a compressed 100GB file, decompress it in memory, and process it—**without saving the archive to your disk**:
 
 ```bash
-hydrastream "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --stream --quiet | zcat | grep -c "^>"
+hs "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --stream --quiet | zcat | grep -c "^>"
 ```
 
-### 3. Use as a Python Library (For Data Science / ML)
-You can embed the loader into your PyTorch/Pandas pipelines using the asynchronous generator:
+### 3. Use as a Python Library (For Data Science / MLOps)
+Embed the streaming engine directly into your PyTorch/Pandas data loaders:
 
 ```python
 import asyncio

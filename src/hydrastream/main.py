@@ -7,10 +7,16 @@ from typing import Annotated
 
 import typer
 
-from hydrastream import HydraStream
+from hydrastream import HydraStream, __version__
 
 # Initialize Typer app with disabled completion and auto-help on empty run
 app = typer.Typer(add_completion=False, no_args_is_help=True)
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"🐉 HydraStream v{__version__}")
+        raise typer.Exit()
 
 
 async def async_main(
@@ -131,12 +137,16 @@ def cli(
     stream_buffer_size: Annotated[
         int | None, typer.Option("--buffer", "-b", help="Maximum stream buffer size in bytes.")
     ] = None,
+    version: Annotated[
+        bool | None, typer.Option("--version", "-v", callback=version_callback, is_eager=True)
+    ] = None,
 ) -> None:
     """
-    HydraStream: A high-performance, asynchronous genomics data downloader.
+    🐉 HydraStream: A multi-headed, fault-tolerant asynchronous downloader for Big Data.
 
-    Optimized for fetching massive datasets from NCBI/EBI with in-memory streaming
-    capabilities, concurrent connections, and robust error recovery.
+    Optimized for fetching massive datasets, ML models, and genomics data.
+    Features in-memory sequential streaming, concurrent chunking, and AIMD rate limiting
+    to survive network drops and server throttling.
     """
     if not links:
         typer.secho("No URLs provided for download!", fg="red", bold=True, err=True)
@@ -144,14 +154,15 @@ def cli(
 
     try:
         # uvloop replaces the standard asyncio event loop for maximum performance
-        try:
-            import uvloop
+        if sys.platform != "win32":
+            try:
+                import uvloop
 
-            async_run = uvloop.run
-        except ImportError:
-            async_run = asyncio.run
+                uvloop.install()
+            except ImportError:
+                pass
 
-        async_run(
+        asyncio.run(
             async_main(
                 links=links,
                 stream=stream,

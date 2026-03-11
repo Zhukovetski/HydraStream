@@ -11,6 +11,8 @@ from collections.abc import AsyncGenerator, Iterable
 from types import TracebackType
 from typing import Any, Self
 
+import httpx
+
 from .models import Chunk, File
 from .monitor import ProgressMonitor
 from .network import NetworkClient
@@ -36,7 +38,6 @@ class HydraStream:
         chunk_timeout: int = 120,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
-
         self.is_running = True
 
         self._monitor = ProgressMonitor(no_ui=no_ui, quiet=quiet, log_file=f"{output_dir}/session.log")
@@ -190,6 +191,10 @@ class HydraStream:
             chunk = None
             try:
                 _, chunk = await self._queue.get()
+                file_obj = self.files.get(chunk.filename)
+                if not file_obj or file_obj.is_failed:
+                    self._queue.task_done()
+                    continue
 
                 # Stream backpressure: wait for the current file to be completely consumed
                 if self._stream and self.current_file != chunk.filename:
@@ -233,15 +238,32 @@ class HydraStream:
                                 self.condition.notify_all()
                 # ------------------------------------
             except asyncio.CancelledError:
-                self._queue.task_done()
                 break  # Worker shutdown requested
-            except Exception:
+
+            except httpx.HTTPStatusError as e:
+                if chunk:
+                    if e.response.status_code in {400, 401, 403, 404, 410, 416}:
+                        await self._monitor.log(
+                            f"Chunk for {chunk.filename} failed permanently (HTTP {e.response.status_code}).",
+                            status="ERROR",
+                        )
+                        self.files[chunk.filename].is_failed = True
+                    else:
+                        if self.is_running:
+                            # Exponential or fixed backoff for chunk retry
+                            await asyncio.sleep(random.uniform(0.5, 2.0))
+                            # Re-queue with high priority (-1)
+                            await self._queue.put((-1, chunk))
+            except (httpx.RequestError, TimeoutError):
                 if self.is_running and chunk:
-                    # Exponential or fixed backoff for chunk retry
-                    await asyncio.sleep(random.uniform(0, 2))
-                    # Re-queue with high priority (-1)
+                    await asyncio.sleep(random.uniform(1.0, 3.0))
                     await self._queue.put((-1, chunk))
-                    self._queue.task_done()
+
+            except Exception as e:
+                await self._monitor.log(f"Critical Worker Exception: {e!r}", status="CRITICAL")
+                raise
+            finally:
+                self._queue.task_done()
 
     async def _process_chunk(self, chunk: Chunk) -> None:
         async with self._semaphore:
@@ -539,5 +561,4 @@ class HydraStream:
         _exc: BaseException | None,
         _tb: TracebackType | None,
     ) -> None:
-
         await self._monitor.stop()

@@ -1,0 +1,21 @@
+# .pre-commit-config.yaml
+repos:
+  # Standard out-of-the-box hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+
+  # Ruff: Linter & Formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.9
+    hooks:
+      # Run the linter and automatically fix safe issues
+      - id: ruff
+        args: [ --fix ]
+      # Run the formatter
+      - id: ruff-format

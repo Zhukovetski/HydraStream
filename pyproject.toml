@@ -1,32 +1,36 @@
 [project]
 name = "hydrastream"
-version = "0.1.0"
+version = "1.0"
 license = {text = "MIT"}
 description = "A high-performance, fault-tolerant, and streaming-capable async downloader."
-authors = [
+authors =[
     { name = "Valentin Zhukovetski", email = "zukovetski@gmail.com" }
 ]
-classifiers = [
+keywords =["async", "streaming", "download", "bioinformatics", "resilience", "uvloop", "httpx"]
+classifiers =[
+    "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+    "Topic :: System :: Networking",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = [
+dependencies =[
     "aiolimiter>=1.2.1",
     "httpx[http2]>=0.28.1",
     "orjson>=3.11.7",
     "rich>=14.3.2",
     "typer>=0.24.1",
-    "uvloop>=0.22.1",
+    "uvloop>=0.22.1 ; sys_platform != 'win32'",
 ]
 
 [build-system]
-requires = ["uv_build>=0.10.4,<0.11.0"]
+requires =["uv_build>=0.10.4,<0.11.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = [
+dev =[
     "icecream>=2.1.10",
     "pip-licenses>=5.5.1",
     "pre-commit>=4.5.1",
@@ -40,13 +44,17 @@ dev = [
 
 [project.scripts]
 hydrastream = "hydrastream.main:app"
+hstream = "hydrastream.main:app"
+hs = "hydrastream.main:app"
 
+[tool.setuptools.dynamic]
+version = {attr = "hydrastream.__init__.__version__"}
 
 [tool.uv]
 package = true
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where =["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
@@ -55,14 +63,13 @@ where = ["src"]
 hydrastream = { workspace = true }
 
 [tool.ruff]
-# Указываем Ruff, где искать исходники для корректной сортировки импортов
+# Specify the source directory for correct import sorting
 src = ["src"]
 line-length = 110
 target-version = "py311"
 
-
 [tool.ruff.lint]
-select = [
+select =[
     "E", "W",  # pycodestyle
     "F",       # pyflakes
     "I",       # isort
@@ -76,39 +83,40 @@ select = [
     "RUF",     # ruff-specific
     "N",       # pep8-naming
 ]
-fixable = ["ALL"]
+fixable =["ALL"]
 
-ignore = [
-    "RUF001", # Проверка кириллических букв в строках
-    "RUF002", # Проверка кириллических букв в докстрингах
-    "RUF003", # Проверка кириллических букв в комментариях (твой случай)
-     "C901",
-     "W293",   # Blank line contains whitespace
+ignore =[
+    "RUF001", # Allow Cyrillic letters in strings
+    "RUF002", # Allow Cyrillic letters in docstrings
+    "RUF003", # Allow Cyrillic letters in comments
+    "C901",   # Ignore complexity warnings for now
+    "W293",   # Blank line contains whitespace
 ]
 
 [tool.ruff.format]
-# Использовать двойные кавычки (стандарт Black) или одинарные
+# Use double quotes (Black standard)
 quote-style = "double"
 
-# Использовать пробелы вместо табуляции
+# Use spaces instead of tabs
 indent-style = "space"
 
-# Автоматически определять перенос строк (LF или CRLF)
+# Automatically detect line endings (LF or CRLF)
 line-ending = "auto"
 
-# Автоматическое форматирование кода в docstrings
+# Automatically format code blocks inside docstrings
 docstring-code-format = true
 
-# Пропускать форматирование строк в коде (если нужно оставить как есть)
+# Do not skip formatting of magic trailing commas
 skip-magic-trailing-comma = false
 
-preview = true # Включает экспериментальные улучшения форматировани
+# Enable experimental formatting improvements
+preview = true
 
 [tool.ruff.lint.pydocstyle]
-convention = "google" # Или "numpy", определяет стиль документации
+convention = "google"
 
 [tool.ruff.lint.mccabe]
-max-complexity = 10 # Порог сложности функции (C901)
+max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*" = ["ANN"]
@@ -116,16 +124,15 @@ max-complexity = 10 # Порог сложности функции (C901)
 [tool.pyright]
 include = ["src"]
 ignore = ["test"]
-
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"
 
-executionEnvironments = [
+executionEnvironments =[
     { root = "src/test", reportPrivateUsage = "none" },
     { root = "src" }
 ]
 
-[pytest]
+[tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

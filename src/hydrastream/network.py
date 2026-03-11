@@ -174,7 +174,6 @@ class NetworkClient:
         monitor: ProgressMonitor,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
-
         self.monitor = monitor
         self.rate_limiter = DynamicRateLimiter(threads * 2)
 
@@ -195,7 +194,6 @@ class NetworkClient:
     async def _evaluate_failure(
         self, url: str, attempt: int, response: httpx.Response | None, exc: Exception | None
     ) -> float | None:
-
         retry_codes = {408, 429, 500, 502, 503, 504}
 
         if response is not None:
@@ -215,7 +213,7 @@ class NetworkClient:
             return delay
 
         if exc is not None:
-            if isinstance(exc, (httpx.RequestError, TimeoutError, asyncio.TimeoutError)):
+            if isinstance(exc, httpx.RequestError | TimeoutError | asyncio.TimeoutError):
                 delay = random.uniform(0, 2**attempt)
                 await self.monitor.log(
                     f"Network issue ({type(exc).__name__}) on {url}. Retrying in {delay:.2f}s...",
@@ -259,7 +257,7 @@ class NetworkClient:
                     delay = await self._evaluate_failure(url, attempt, response=None, exc=exc)
 
             if delay is None:
-                break
+                return None
             await asyncio.sleep(delay)
 
         return None
@@ -286,17 +284,24 @@ class NetworkClient:
 
         for attempt in range(1, 4):
             response = None
+            yielded = False
             async with self.rate_limiter.acquire():
                 try:
                     async with asyncio.timeout(chunk_timeout):
                         async with self.client.stream("GET", url, headers=headers) as response:
                             if response.status_code < 400:
+                                if random.random() < 0.1:
+                                    await self.rate_limiter.try_scale_up()
+                                yielded = True
                                 yield response
                                 return
 
                             delay = await self._evaluate_failure(url, attempt, response=response, exc=None)
 
                 except Exception as exc:
+                    if yielded:
+                        raise
+
                     delay = await self._evaluate_failure(url, attempt, response=None, exc=exc)
 
             if delay is None:
@@ -305,11 +310,11 @@ class NetworkClient:
                         f"Stream failed on {url}", request=response.request, response=response
                     )
                 else:
-                    raise RuntimeError(f"Stream failed on {url} before response was received")
+                    raise httpx.RequestError(f"Stream failed on {url} before response was received")
 
             await asyncio.sleep(delay)
 
-        raise Exception(f"Failed to establish stream for {url} after 3 attempts.")
+        raise httpx.RequestError(f"Failed to establish stream for {url} after 3 attempts.")
 
     def _get_retry_after(self, response: httpx.Response) -> float | None:
         """Parses the 'Retry-After' header into seconds."""

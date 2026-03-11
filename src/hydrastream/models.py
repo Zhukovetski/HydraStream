@@ -83,6 +83,7 @@ class File:
     expected_md5: str | None = None
     verified: bool = False
     fd: int | None = field(default=None, repr=False, compare=False)
+    is_failed: bool = False
 
     def __post_init__(self) -> None:
         """
