@@ -29,7 +29,7 @@ class NCBIProvider:
         """
 
         # Resolve the parent directory URL
-        base_url = url.rsplit("/", 1)[0]
+        base_url = url.rstrip("/").rsplit("/", 1)[0]
         checksum_url = f"{base_url}/md5checksums.txt"
 
         resp = await self.network.safe_request("GET", checksum_url)
@@ -38,7 +38,8 @@ class NCBIProvider:
 
         # Parse the standard NCBI checksum format
         for line in resp.text.splitlines():
-            if filename in line:
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].endswith(filename):
                 return line.split()[0]
         return None
 

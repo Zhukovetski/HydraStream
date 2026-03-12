@@ -3,7 +3,7 @@
 
 import contextlib
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Self
 
 import orjson
@@ -141,7 +141,8 @@ class File:
         Returns:
             bytes: JSON representation of the file state.
         """
-        return orjson.dumps(self, option=orjson.OPT_SERIALIZE_DATACLASS | orjson.OPT_INDENT_2)
+        clear_file = replace(self, fd=None)
+        return orjson.dumps(clear_file, option=orjson.OPT_SERIALIZE_DATACLASS | orjson.OPT_INDENT_2)
 
     @classmethod
     def from_json(cls, content: bytes) -> Self:

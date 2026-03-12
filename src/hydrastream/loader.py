@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import heapq
 import random
+import shutil
 import signal
 from collections.abc import AsyncGenerator, Iterable
 from types import TracebackType
@@ -69,12 +70,15 @@ class HydraStream:
         self.current_file = ""
 
     async def _autosave(self) -> None:
+        loop = asyncio.get_running_loop()
         while self.is_running:
             try:
                 await asyncio.sleep(60)
-                await self.storage.save_all_states(self.files)
+                await loop.run_in_executor(None, self.storage.save_all_states, self.files)
             except asyncio.CancelledError:
                 break
+            except Exception as e:
+                await self._monitor.log(f"Auto-save operation faile: {e}", status="ERROR")
 
     async def _add_task_producer(
         self, links: Iterable[str], expected_checksums: dict[str, str] | None = None
@@ -118,6 +122,8 @@ class HydraStream:
                     self._monitor.add_file(filename)
                     md5_val = await self.providers.resolve_hash(url, filename)
                     await self._monitor.done(filename)
+                    if md5_val is None:
+                        await self._monitor.log(f"Missing MD5 hash for file: {filename}")
 
                 # 1. State Recovery
                 if not self._stream:
@@ -136,13 +142,21 @@ class HydraStream:
                 # 3. File object creation
                 if not file:
                     if not self._stream:
-                        new_filename = self.storage.create_sparse_file(filename=filename, size=total_size)
-                        if new_filename:
-                            await self._monitor.log(
-                                f"{filename} already exists. The new file will be saved as {new_filename}.",
-                                status="WARNING",
+                        if (free_space := shutil.disk_usage(self.storage.out_dir).free) >= total_size:
+                            new_filename = self.storage.create_sparse_file(filename=filename, size=total_size)
+                            if new_filename:
+                                await self._monitor.log(
+                                    f"{filename} already exists."
+                                    f"The new file will be saved as {new_filename}.",
+                                    status="WARNING",
+                                )
+                                filename = new_filename
+                        else:
+                            raise OSError(
+                                f"Insufficient disk space. "
+                                f"Required: {total_size / (1024**2):.2f} MB, "
+                                f"Available: {free_space / (1024**2):.2f} MB."
                             )
-                            filename = new_filename
 
                     file = File(
                         filename=filename,
@@ -175,6 +189,10 @@ class HydraStream:
                         await self._queue.put((i, c))
 
             except asyncio.CancelledError:
+                break
+            except OSError as e:
+                await self._monitor.log(str(e))
+                await self.stop()
                 break
             except Exception as e:
                 await self._monitor.log(f"Failed to process URL {url}: {e}", status="ERROR")
@@ -219,7 +237,7 @@ class HydraStream:
                                 f"Verifying MD5 checksum for {filename}...", status="INFO"
                             )
                             try:
-                                loop = asyncio.get_event_loop()
+                                loop = asyncio.get_running_loop()
                                 await loop.run_in_executor(None, self.storage.verify_file_hash, file_obj)
                                 await self._monitor.log(f"Integrity confirmed: {filename}", status="SUCCESS")
                             except ValueError as ve:
@@ -299,7 +317,7 @@ class HydraStream:
                             downloaded_in_this_attempt += len(data)
                             buffer.extend(data)
                             self._monitor.update(chunk.filename, len(data))
-                        if len(self.heap) > self.heap_size:
+                        if len(self.heap) >= self.heap_size:
                             async with self.condition:
                                 await self.condition.wait_for(lambda: len(self.heap) <= self.heap_size)
                         await self._stream_queue.put((chunk.current_pos, buffer))
@@ -309,8 +327,9 @@ class HydraStream:
                 raise
             except Exception:
                 if self._stream and buffer:
-                    self._stream_queue.put_nowait((chunk.current_pos, buffer))
-                    chunk.current_pos = chunk.current_pos + len(buffer)
+                    with contextlib.suppress(asyncio.QueueFull):
+                        self._stream_queue.put_nowait((chunk.current_pos, buffer))
+                        chunk.current_pos = chunk.current_pos + len(buffer)
                 raise
 
     async def _write_buffer(self, fd: int, data: bytearray, chunk: Chunk) -> None:
@@ -489,6 +508,7 @@ class HydraStream:
 
         finally:
             # Cleanup and notify stream_all that we are done
+            self.heap.clear()
             del self.files[filename]
 
     async def run(
@@ -534,7 +554,7 @@ class HydraStream:
 
             await asyncio.gather(self.task_creator, self.autosave_task, *self.workers, return_exceptions=True)
 
-            await self.storage.save_all_states(self.files)
+            self.storage.save_all_states(self.files)
             await self.network.close()
 
             for file_obj in self.files.values():

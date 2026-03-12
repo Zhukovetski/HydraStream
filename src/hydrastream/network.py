@@ -209,6 +209,7 @@ class NetworkClient:
             await self.monitor.log(
                 f"Attempt {attempt} failed ({response.status_code}) for {url}. Retrying in {delay:.2f}s...",
                 status="WARNING",
+                throttle_key="net_slow",
             )
             return delay
 
@@ -218,6 +219,7 @@ class NetworkClient:
                 await self.monitor.log(
                     f"Network issue ({type(exc).__name__}) on {url}. Retrying in {delay:.2f}s...",
                     status="WARNING",
+                    throttle_key="net_drop",
                 )
                 return delay
 

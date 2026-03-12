@@ -6,6 +6,7 @@ import hashlib
 import os
 import tempfile
 from _hashlib import HASH
+from copy import deepcopy
 from pathlib import Path
 
 from .models import File
@@ -93,7 +94,7 @@ class StorageManager:
             data (bytearray): The raw bytes to write.
             offset (int): The absolute byte position in the file.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, os.pwrite, fd, data, offset)
 
     def get_state_path(self, filename: str) -> Path:
@@ -125,7 +126,7 @@ class StorageManager:
                 Path.unlink(temp_path)
             raise
 
-    async def save_all_states(self, files: dict[str, File]) -> None:
+    def save_all_states(self, files: dict[str, File]) -> None:
         """
         Iterates over all active files and saves their states,
         skipping files that are completely downloaded.
@@ -133,11 +134,11 @@ class StorageManager:
         Args:
             files (dict[str, File]): Dictionary mapping filenames to File objects.
         """
-        loop = asyncio.get_event_loop()
-        for _, file in list(files.items()):
+        files_snapshot = deepcopy(files)
+        for file in files_snapshot.values():
             # Only save state if at least one chunk is not completely finished
             if not all(c.current_pos > c.end for c in (file.chunks or [])):
-                await loop.run_in_executor(None, self.save_state, file)
+                self.save_state(file)
 
     def load_state(self, filename: str) -> tuple[File | None, int]:
         """

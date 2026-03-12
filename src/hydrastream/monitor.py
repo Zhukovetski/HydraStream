@@ -128,6 +128,7 @@ class ProgressMonitor:
         self._buffer: dict[str, int] = defaultdict(int)
         self.refresh_per_second = 10
         self.renewal_rate = 1 / self.refresh_per_second
+        self._log_throttle: dict[str, float] = {}
 
         if not (self.no_ui or self.quiet):
             self.progress = Progress(
@@ -160,7 +161,14 @@ class ProgressMonitor:
                 refresh_per_second=10,
             )
 
-    async def log(self, message: str | Rule, status: STATUS = "INFO", progress: bool = False) -> None:
+    async def log(
+        self,
+        message: str | Rule,
+        status: STATUS = "INFO",
+        progress: bool = False,
+        throttle_key: str | None = None,
+        throttle_sec: float = 10.0,
+    ) -> None:
         """
         Universal logging method. Writes to the log file and conditionally
         renders to the terminal UI based on the operational mode.
@@ -170,11 +178,17 @@ class ProgressMonitor:
             status (STATUS): Severity level dictating UI formatting.
             progress (bool): If True, forces display in the UI even if it's an INFO message.
         """
+        if throttle_key:
+            now = time.monotonic()
+            last_time = self._log_throttle.get(throttle_key, 0.0)
+            if now - last_time < throttle_sec:
+                return
+            self._log_throttle[throttle_key] = now
 
         timestamp = datetime.now().strftime("[%H:%M:%S]")
         formatted_msg = f"{timestamp} {message}"
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._write_log, formatted_msg)
         renderable = formatted_msg
 
@@ -223,14 +237,13 @@ class ProgressMonitor:
         if not self.log_file:
             return
 
-        if self.log_file:
-            try:
-                with self.log_file.open("a", encoding="utf-8") as f:
-                    clean_msg = Text.from_markup(str(msg)).plain
-                    f.write(f"{clean_msg}\n")
-            except OSError:
-                # Graceful degradation: do not crash the app if logging fails
-                pass
+        try:
+            with self.log_file.open("a", encoding="utf-8") as f:
+                clean_msg = Text.from_markup(str(msg)).plain
+                f.write(f"{clean_msg}\n")
+        except OSError:
+            # Graceful degradation: do not crash the app if logging fails
+            pass
 
     def add_file(self, filename: str, total_size: int | None = None) -> None:
         """Registers a new file in the UI, keeping it hidden until data arrives."""
