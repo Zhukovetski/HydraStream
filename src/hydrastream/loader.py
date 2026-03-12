@@ -78,7 +78,7 @@ class HydraStream:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                await self._monitor.log(f"Auto-save operation faile: {e}", status="ERROR")
+                await self._monitor.log(f"Auto-save operation failed: {e}", status="ERROR")
 
     async def _add_task_producer(
         self, links: Iterable[str], expected_checksums: dict[str, str] | None = None

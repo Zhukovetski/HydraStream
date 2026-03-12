@@ -245,9 +245,7 @@ class StorageManager:
                 f"Got:      {calculated}"
             )
 
-            # TODO: Consider adding logic to automatically quarantine
-            # or delete the corrupted file here.
-            # filepath.unlink(missing_ok=True)
+            filepath.unlink(missing_ok=True)
 
             raise ValueError(err_msg)
 

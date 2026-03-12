@@ -176,6 +176,7 @@ class NetworkClient:
     ) -> None:
         self.monitor = monitor
         self.rate_limiter = DynamicRateLimiter(threads * 2)
+        self.max_retries = 3
 
         options = cast(dict[str, Any], {**DEFAULT_OPTIONS, **(client_kwargs or {})})
 
@@ -245,7 +246,7 @@ class NetworkClient:
         Returns:
             httpx.Response on success, or None if all retry attempts fail.
         """
-        for attempt in range(1, 4):
+        for attempt in range(1, self.max_retries + 1):
             async with self.rate_limiter.acquire():
                 try:
                     resp = await self.client.request(method, url, **kwargs)
@@ -284,7 +285,7 @@ class NetworkClient:
             TimeoutError: If the chunk download exceeds the specified absolute timeout.
         """
 
-        for attempt in range(1, 4):
+        for attempt in range(1, self.max_retries + 1):
             response = None
             yielded = False
             async with self.rate_limiter.acquire():
