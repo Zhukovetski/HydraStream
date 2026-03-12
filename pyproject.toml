@@ -1,6 +1,6 @@
 [project]
 name = "hydrastream"
-version = "1.0"
+version = "1.0.0"
 license = {text = "MIT"}
 description = "A high-performance, fault-tolerant, and streaming-capable async downloader."
 authors =[

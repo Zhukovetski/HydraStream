@@ -6,4 +6,4 @@ from .monitor import ProgressMonitor
 
 __all__ = ["HydraStream", "ProgressMonitor"]
 
-__version__ = "1.0"
+__version__ = "1.0.0"
