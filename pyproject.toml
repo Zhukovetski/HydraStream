@@ -48,6 +48,11 @@ hydrastream = "hydrastream.main:app"
 hstream = "hydrastream.main:app"
 hs = "hydrastream.main:app"
 
+[project.urls]
+Homepage = "https://github.com/Zhukovetski/HydraStream"
+Repository = "https://github.com/Zhukovetski/HydraStream"
+Issues = "https://github.com"
+
 [tool.setuptools.dynamic]
 version = {attr = "hydrastream.__init__.__version__"}
 

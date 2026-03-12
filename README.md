@@ -5,7 +5,7 @@
 [![Tests](https://github.com/Zhukovetski/HydraStream/actions/workflows/tests.yml/badge.svg)](https://github.com/Zhukovetski/HydraStream/actions/workflows/tests.yml)
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/95330961-9470-462d-a50f-cf1427d0cc2a" alt="HydraStream Demo" width="800">
+  <img src="https://raw.githubusercontent.com/Zhukovetski/HydraStream/main/assets/HydraStream-Demo.gif" alt="HydraStream Demo" width="800">
 </p>
 
 A high-performance, fault-tolerant, and streaming-capable downloader for Big Data. Built with pure Python, `uvloop`, and `httpx`.
@@ -62,7 +62,7 @@ Download a file using 20 concurrent connections:
 hs "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
 ```
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/752a364b-920d-421a-bbfa-7770c2687777" alt="Disk Download Demo" width="800">
+  <img src="https://raw.githubusercontent.com/Zhukovetski/HydraStream/main/assets/HydraStream-Demo.gif" alt="Disk Download Demo" width="800">
 </p>
 *(If interrupted, rerun the exact command to resume from the last saved byte).*
 
@@ -73,7 +73,7 @@ Download a compressed 100GB file, decompress it in memory, and process it—**wi
 hs "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --stream --quiet | zcat | grep -c "^>"
 ```
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/d6546be9-8e15-4355-b663-e58a4636e055" alt="Pipeline Streaming Demo" width="800">
+  <img src="https://raw.githubusercontent.com/Zhukovetski/HydraStream/main/assets/Pipeline-Streaming-Demo.gif" alt="Pipeline Streaming Demo" width="800">
 </p>
 
 ### 3. Use as a Python Library (For Data Science / MLOps)
