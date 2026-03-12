@@ -25,10 +25,11 @@ A high-performance, fault-tolerant, and streaming-capable downloader for Big Dat
   * **AIMD Rate Limiting & Circuit Breaker** to prevent IP bans.
   * **Exponential Backoff + Full Jitter** for network drops.
   * **Partial Chunk Commits:** If a connection drops, it saves the exact byte offset. You never lose progress.
+* 🎯 **The "Unplug" Challenge:** *We dare you to break it.* Start a massive download, disable your Wi-Fi, close your laptop lid, or send a `SIGSTOP` to the process. Wait 10 minutes. Turn it back on. HydraStream won't crash. It will patiently wait, auto-recover, and resume from the exact byte where it left off.
 * 🧩 **Smart Integrity Validation:** Automatically extracts and verifies MD5 checksums from AWS S3 (`ETag`), Google Cloud (`x-goog-hash`), standard HTTP headers, and NCBI provider files.
 * 💾 **Atomic Writes:** Uses low-level `os.pwrite` to prevent Global Interpreter Lock (GIL) bottlenecks during disk I/O.
 * 📊 **Adaptive UI:**
-  * **Default:** Beautiful, dynamic terminal UI powered by `Rich`.
+  * **Default:** Beautiful, dynamic terminal UI powered by `Rich` (gradients, global ETA).
   * `-nu / --no-ui`: Plain text logs for CI/CD environments.
   * `-q / --quiet`: Strict POSIX compliance (stderr for logs, stdout for data streams).
 
@@ -40,11 +41,13 @@ Requires Python 3.11+. Install globally using `uv` (recommended) or `pipx`:
 
 ```bash
 uv tool install git+https://github.com/Zhukovetski/HydraStream.git
-
+```
+```bash
 pipx install git+https://github.com/Zhukovetski/HydraStream.git
 ```
 
-After installation, you can use the `hydrastream` command directly from anywhere in your terminal:
+
+You can use hydrastream, hstream, or simply hs to run the tool from anywhere in your system:
 ```bash
 hs "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
 ```
@@ -58,6 +61,9 @@ Download a file using 20 concurrent connections:
 ```bash
 hs "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
 ```
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/752a364b-920d-421a-bbfa-7770c2687777" alt="Disk Download Demo" width="800">
+</p>
 *(If interrupted, rerun the exact command to resume from the last saved byte).*
 
 ### 2. Unix Pipeline Streaming (The Killer Feature) 💥
@@ -66,6 +72,9 @@ Download a compressed 100GB file, decompress it in memory, and process it—**wi
 ```bash
 hs "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --stream --quiet | zcat | grep -c "^>"
 ```
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/d6546be9-8e15-4355-b663-e58a4636e055" alt="Pipeline Streaming Demo" width="800">
+</p>
 
 ### 3. Use as a Python Library (For Data Science / MLOps)
 Embed the streaming engine directly into your PyTorch/Pandas data loaders:
@@ -100,15 +109,29 @@ asyncio.run(main())
 | `--no-ui` | `-nu` | `False` | Disables progress bars, leaves plain text logs. |
 | `--quiet` | `-q` | `False` | Dead silence. No console output at all (for strict pipelines). |
 | `--md5` | | `None` | Expected MD5 hash (works only if a single URL is provided). |
-| `--buffer` | `-b` | `threads * 5120`| Maximum stream buffer size in bytes. |
+| `--buffer` | `-b` | `threads * 5MB`| Maximum stream buffer size in bytes. |
 ---
 
 ## 🧠 Under the Hood (Architecture)
 
-For those interested in System Design, this tool implements:
-* **Domain-Driven Design:** Separation of concerns across `network.py`, `storage.py`, `models.py`, and `loader.py`.
-* **Out-of-Order Execution to Sequential Stream:** Uses `asyncio.PriorityQueue` for LIFO retry handling and `heapq` as a reordering buffer to convert chaotic concurrent HTTP ranges into a strict sequential byte stream.
-* **Graceful Shutdown:** Intercepts `SIGINT`/`SIGTERM`, safely flushes queues with Poison Pills (`-1`), and commits partial chunks to prevent zombie tasks or memory leaks.
+For those interested in System Design, this tool implements several advanced engineering patterns:
+
+* **Network Congestion Control (AIMD):** Implements an Additive Increase / Multiplicative Decrease algorithm and a Circuit Breaker pattern to dynamically scale requests, preventing IP bans and mitigating "Thundering Herd" problems.
+* **Out-of-Order Execution to Sequential Stream:** Uses `asyncio.PriorityQueue` for LIFO retry handling and `heapq` as a sliding reordering buffer to convert chaotic concurrent HTTP ranges into a strict sequential byte stream.
+* **Zero-Overhead UI Debouncing:** Uses a detached asynchronous refresh loop and a `defaultdict` buffer to batch terminal rendering operations, ensuring CPU load stays near 0% even at speeds of 500+ MB/s.
+* **Crash-Proof State Persistence:** Uses `NamedTemporaryFile` and POSIX directory `fsync` to guarantee atomic state saves. If power is lost mid-save, the state file never corrupts.
+* **Smart File Discovery:** Implements RFC 5987 parsing for `Content-Disposition` headers to extract complex UTF-8 filenames, falling back to URL parsing and mimetype guessing.
+* **Graceful Shutdown & Fail-Fast:** Intercepts `SIGINT`/`SIGTERM`, safely flushes queues with Poison Pills (`-1`), and instantly cancels all worker tasks for a specific file if a fatal HTTP 404/403 is encountered.
+---
+
+## 🗺️ Roadmap
+
+The journey of the Hydra has just begun. Here is what is planned for the future:
+
+* **v1.1: Autonomous Worker Scaling (AIMD)**
+  * Evolve the static thread pool into an adaptive concurrency manager. The system will dynamically spawn or kill download workers based on real-time network health and downstream pipeline backpressure. No more manual `--threads` tuning—the Hydra will automatically grow or shed heads to match your system's optimal capacity.
+* **v2.0: Rewrite It In Rust (RIIR) 🦀**
+  * Port the core engine to Rust using `tokio` and `reqwest` to bypass the Python GIL. This will enable true multi-core execution, zero-cost abstractions, and bare-metal performance for hashing and I/O, while maintaining a Python wrapper (`PyO3`) for seamless Data Science / ML integration.
 
 ---
 ## License

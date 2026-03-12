@@ -353,15 +353,12 @@ class ProgressMonitor:
         remain_time_str = f"{r_hours:02d}:{r_mins:02d}:{r_secs:02d}"
 
         if self.total_bytes < 1_073_741_824:  # GB
-            size_str = f"{self.download_bytes / 1024 / 1024:.2f} / {self.total_bytes / 1024 / 1024:.2f} MB"
+            size_str = f"{self.download_bytes / (1024**2):.2f}/{self.total_bytes / (1024**2):.2f} MB"
         else:
-            size_str = (
-                f"{self.download_bytes / 1024 / 1024 / 1024:.2f} /"
-                f" {self.total_bytes / 1024 / 1024 / 1024:.2f} GB"
-            )
+            size_str = f"{self.download_bytes / (1024**3):.2f}/{self.total_bytes / (1024**3):.2f} GB"
 
         # Trigger final report rendering if all tasks are complete
-        if not self.tasks and len(self.progress.tasks) > 0:
+        if not self.tasks and self.total_files > 0 and self.total_files == self.files_completed:
             grid = Table.grid(expand=True)
             grid.add_column()
             grid.add_column(justify="center")
@@ -396,9 +393,13 @@ class ProgressMonitor:
                 self._refresh.cancel()
 
         elapsed = time.monotonic() - self.start_time
-        avg_speed = (self.download_bytes / elapsed) / 1024 / 1024 if elapsed > 0 else 0
+        avg_speed = (self.download_bytes / elapsed) / (1024**2) if elapsed > 0 else 0
 
-        total_mb = self.download_bytes / 1024 / 1024
+        if self.total_bytes < 1_073_741_824:  # GB
+            size_str = f"{self.download_bytes / (1024**2):.2f}/{self.total_bytes / (1024**2):.2f} MB"
+        else:
+            size_str = f"{self.download_bytes / (1024**3):.2f}/{self.total_bytes / (1024**3):.2f} GB"
+
         mins, secs = divmod(int(elapsed), 60)
         hours, mins = divmod(mins, 60)
         time_str = f"{hours:02d}:{mins:02d}:{secs:02d}"
@@ -408,7 +409,7 @@ class ProgressMonitor:
         report = (
             f"\n--- Final Report ({status_word}) ---\n"
             f"Total files:   {self.files_completed}/{self.total_files}\n"
-            f"Total Data:    {total_mb:.2f} MB\n"
+            f"Total Data:    {size_str}\n"
             f"Average Speed: {avg_speed:.2f} MB/s\n"
             f"Total Time:    {time_str}\n"
             f"--------------------------------"

@@ -423,7 +423,11 @@ class HydraStream:
 
             await asyncio.gather(self.task_creator, *self.workers, return_exceptions=True)
 
-            if self.is_running:
+            if (
+                self.is_running
+                and self._monitor.total_files > 0
+                and self._monitor.total_files == self._monitor.files_completed
+            ):
                 await self._monitor.log(
                     "All downloads completed successfully!", status="SUCCESS", progress=True
                 )
@@ -536,7 +540,11 @@ class HydraStream:
             async with self.condition:
                 await self.condition.wait_for(lambda: not (self.files and self.is_running))
 
-            if self.is_running:
+            if (
+                self.is_running
+                and self._monitor.total_files > 0
+                and self._monitor.total_files == self._monitor.files_completed
+            ):
                 await self._monitor.log(
                     "All downloads completed successfully!", status="SUCCESS", progress=True
                 )
