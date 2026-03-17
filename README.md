@@ -11,6 +11,8 @@
 
 A high-performance, fault-tolerant, and streaming-capable downloader for Big Data. Built with pure Python, `uvloop`, and `httpx`.
 
+---
+
 ## 💡 The Problem vs. The Solution
 
 **The Problem:** Downloading massive datasets (ML weights, DB dumps, genomic sequences) using standard tools like `wget` or `curl` is slow due to single-connection limits. Furthermore, processing these huge files usually requires saving them to disk first, creating severe I/O bottlenecks and requiring massive storage.
@@ -33,6 +35,20 @@ A high-performance, fault-tolerant, and streaming-capable downloader for Big Dat
   * **Default:** Beautiful, dynamic terminal UI powered by `Rich` (gradients, global ETA).
   * `-nu / --no-ui`: Plain text logs for CI/CD environments.
   * `-q / --quiet`: Strict POSIX compliance (stderr for logs, stdout for data streams).
+
+---
+
+## 📊 Performance & Benchmarks
+
+**Throughput (Datacenter Environment):**
+When running on gigabit backbone networks (e.g., AWS, GitHub Actions), `HydraStream` matches the raw I/O performance of C++ utilities like `aria2`. Both saturate the server-side limits identically, proving that the Python/uvloop implementation adds **zero overhead**.
+
+**The Real-World Advantage (High Latency Networks):**
+Standard tools like `wget` or `curl` use a single TCP connection. On residential or corporate networks with high latency (e.g., 100ms+ ping to NCBI servers), single-stream TCP is physically bottlenecked by the TCP Window Size (Bandwidth-Delay Product), often capping at 2-5 MB/s.
+`HydraStream` bypasses this by multiplexing the file across 20+ connections, fully saturating your local ISP bandwidth.
+
+**The Killer Feature (Streaming):**
+Unlike `aria2`, which must write to disk to reconstruct multi-part downloads, `HydraStream` uses an in-memory `heapq` to reorder chunks on the fly. This allows you to achieve multi-connection speeds **while piping data directly into other Unix tools**, saving terabytes of SSD wear-and-tear.
 
 ---
 

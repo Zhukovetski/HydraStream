@@ -1,0 +1,43 @@
+name: Performance Benchmark
+
+on:
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    env:
+      TEST_URL: "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_genomic.fna.gz"
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🚀 Install uv & HydraStream
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.11
+      - run: uv tool install .
+
+      - name: 🛠 Install aria2
+        run: sudo apt-get update && sudo apt-get install -y aria2
+
+      - name: 🐢 Benchmark 1 - WGET (Single connection)
+        run: |
+          echo "Testing wget..."
+          time wget -q $TEST_URL -O wget_test.gz
+          rm wget_test.gz
+
+      - name: 🐇 Benchmark 2 - ARIA2 (10 connections)
+        run: |
+          echo "Testing aria2c..."
+          time aria2c -x 10 -s 10 -q $TEST_URL -o aria_test.gz
+          rm aria_test.gz
+
+      - name: 🐉 Benchmark 3 - HydraStream (20 connections)
+        run: |
+          echo "Testing HydraStream..."
+          time hs $TEST_URL -t 20 -q -o ./
+          rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
