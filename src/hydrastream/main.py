@@ -7,7 +7,8 @@ from typing import Annotated
 
 import typer
 
-from hydrastream import HydraStream, __version__
+from hydrastream import __version__
+from hydrastream.facade import HydraClient
 
 # Initialize Typer app with disabled completion and auto-help on empty run
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -40,7 +41,8 @@ async def async_main(
         no_ui (bool): Disable GUI (plain text logs only) if set to True.
         quiet (bool): Dead silence. No console output at all if set to True.
         output_dir (str): Destination directory for downloaded files.
-        md5 (str | None): Expected MD5 checksum (only evaluated if a single link is provided).
+        md5 (str | None): Expected MD5 checksum (only evaluated if a single link is
+        provided).
         chunk_timeout (float): Timeout in seconds for individual chunk requests.
         stream_buffer_size (int | None): Maximum buffer size for in-memory streaming.
     """
@@ -51,10 +53,12 @@ async def async_main(
         expected_checksums[links[0]] = md5
     elif md5 and len(links) > 1:
         typer.secho(
-            "Warning: The --md5 flag is ignored when multiple URLs are provided.", fg="yellow", err=True
+            "Warning: The --md5 flag is ignored when multiple URLs are provided.",
+            fg="yellow",
+            err=True,
         )
 
-    async with HydraStream(
+    async with HydraClient(
         threads=threads,
         no_ui=no_ui,
         quiet=quiet,
@@ -71,7 +75,8 @@ async def async_main(
 
             if is_terminal:
                 typer.secho(
-                    "⚠️ Warning: You are running in --stream mode but output is not redirected!\n"
+                    "⚠️ Warning: You are running in --stream mode but output "
+                    "is not redirected!\n"
                     "The downloaded binary data will be discarded.",
                     fg="yellow",
                     err=True,
@@ -79,7 +84,8 @@ async def async_main(
 
                 if not md5:
                     typer.secho(
-                        "Please use a pipe (e.g., '| zcat') or redirect to a file (e.g., '> file.gz').\n"
+                        "Please use a pipe (e.g., '| zcat') or redirect to a file "
+                        "(e.g., '> file.gz').\n"
                         "Aborting to save bandwidth.",
                         fg="red",
                         err=True,
@@ -87,10 +93,12 @@ async def async_main(
                     raise typer.Exit(code=1)
 
                 typer.secho(
-                    "Proceeding in 'Verification Only' mode since --md5 is provided.", fg="cyan", err=True
+                    "Proceeding in 'Verification Only' mode since --md5 is provided.",
+                    fg="cyan",
+                    err=True,
                 )
 
-            async for _, file_gen in loader.stream_all(links, expected_checksums):
+            async for _, file_gen in loader.stream(links, expected_checksums):
                 async for chunk in file_gen:
                     if not is_terminal:
                         # Safely write raw bytes to the pipe/file
@@ -109,36 +117,55 @@ async def async_main(
 
 @app.command()
 def cli(
-    links: Annotated[list[str], typer.Argument(help="List of target URLs to download.")],
+    links: Annotated[
+        list[str], typer.Argument(help="List of target URLs to download.")
+    ],
     md5: Annotated[
-        str | None, typer.Option("--md5", help="Expected MD5 checksum (applicable only for a single URL).")
+        str | None,
+        typer.Option(
+            "--md5", help="Expected MD5 checksum (applicable only for a single URL)."
+        ),
     ] = None,
     output_dir: Annotated[
-        str, typer.Option("-o", "--output", help="Destination directory for downloaded files.")
+        str,
+        typer.Option(
+            "-o", "--output", help="Destination directory for downloaded files."
+        ),
     ] = "download",
     threads: Annotated[
-        int, typer.Option("-t", "--threads", help="Number of concurrent download connections.")
+        int,
+        typer.Option(
+            "-t", "--threads", help="Number of concurrent download connections."
+        ),
     ] = 3,
     stream: Annotated[
         bool,
         typer.Option(
-            "-s", "--stream", help="Enable streaming mode (outputs to stdout without saving to disk)."
+            "-s",
+            "--stream",
+            help="Enable streaming mode (outputs to stdout without saving to disk).",
         ),
     ] = False,
     no_ui: Annotated[
-        bool, typer.Option("--no-ui", "-nu", help="Disable GUI (plain text logs only) if set to True")
+        bool,
+        typer.Option(
+            "--no-ui", "-nu", help="Disable GUI (plain text logs only) if set to True"
+        ),
     ] = False,
     quiet: Annotated[
-        bool, typer.Option("--quiet", "-q", help="Dead silence. No console output at all.")
+        bool,
+        typer.Option("--quiet", "-q", help="Dead silence. No console output at all."),
     ] = False,
     chunk_timeout: Annotated[
         int, typer.Option(help="Connection timeout in seconds for chunk downloads.")
     ] = 30,
     stream_buffer_size: Annotated[
-        int | None, typer.Option("--buffer", "-b", help="Maximum stream buffer size in bytes.")
+        int | None,
+        typer.Option("--buffer", "-b", help="Maximum stream buffer size in bytes."),
     ] = None,
     version: Annotated[
-        bool | None, typer.Option("--version", "-v", callback=version_callback, is_eager=True)
+        bool | None,
+        typer.Option("--version", "-v", callback=version_callback, is_eager=True),
     ] = None,
 ) -> None:
     """
@@ -182,7 +209,7 @@ def cli(
     except Exception as e:
         typer.secho(f"\n💥 Critical error: {e}", fg="red", bold=True, err=True)
         # 1 indicates a general error (useful for automated pipelines)
-        raise typer.Exit(code=1) from None
+        raise  # typer.Exit(code=1) from None
 
 
 if __name__ == "__main__":
