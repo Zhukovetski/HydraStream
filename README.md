@@ -46,6 +46,9 @@ Download a file using 20 connections:
 ```bash
 hs "https://ftp.ncbi.nlm.nih.gov/.../genome.fna.gz" -t 20 --output ./data
 ```
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Zhukovetski/HydraStream/main/assets/HydraStream-Demo.gif" alt="HydraStream Demo" width="800">
+</p>
 
 ### 2. Stream to stdout (Pipe)
 Download concurrently and pipe directly into a decompressor:
