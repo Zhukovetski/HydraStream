@@ -9,7 +9,7 @@
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Zhukovetski/HydraStream/main/assets/Demo.gif" alt="HydraStream Demo" width="800">
-</p>assets/
+</p>
 
 HydraStream is a concurrent HTTP downloader written in Python. It supports multipart downloading and in-memory chunk reordering, allowing you to stream remote files directly to `stdout` without writing to disk.
 
