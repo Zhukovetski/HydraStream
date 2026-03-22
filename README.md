@@ -26,15 +26,16 @@ This project bridges the gap: it fetches chunks concurrently via `httpx` and `uv
 * **Rate Limiting & Backoff**: AIMD-based rate limiter to handle `429 Too Many Requests` and exponential backoff for network drops.
 * **Resumption**: Saves partial state for disk-mode downloads to resume after interruptions.
 * **POSIX Compliance**: In stream mode or `--quiet` mode, logs are routed to `stderr` and data to `stdout`.
-  
-## Benchmarks (Python vs C++)
-Tested on GitHub Actions Ubuntu Runners (Gigabit Network) downloading a 1.0GB genomic archive.
 
-| Tool | Real Time | Language |
-|------|-----------|----------|
-| `HydraStream` (-t 20) | **9.48s** | Python 3.11 + uvloop |
-| `wget` | 10.46s | C |
-| `aria2c` (-x 10 -s 10) | 11.08s | C++ |
+## Benchmarks
+Tested on Ubuntu (GitHub Actions) downloading a 1GB `.fna.gz` dataset from NCBI.
+Despite the CPU overhead of pure Python, HydraStream outperforms optimized C/C++ binaries in wall-clock time by effectively multiplexing connections and utilizing lock-free I/O (`os.pwrite`).
+
+| Tool | Connections | Real Time (Wall-clock) | User Time (CPU) | Sys Time (Kernel) |
+| :--- | :---: | :---: | :---: | :---: |
+| **HydraStream** | 20 | **9.480s** | 8.430s | 1.946s |
+| **wget** | 1 | 10.464s | 0.853s | 1.764s |
+| **aria2c** | 10 | 11.081s | 0.986s | 1.850s |
 
 HydraStream outperforms established C/C++ utilities by minimizing disk I/O bottlenecks using atomic `os.pwrite` operations and highly optimized event-loop orchestration.
 
