@@ -29,6 +29,7 @@ async def async_main(
     md5: str | None,
     chunk_timeout: float,
     stream_buffer_size: int | None,
+    verify: bool,
 ) -> None:
     """
     Core asynchronous execution function for downloading or streaming files.
@@ -64,6 +65,7 @@ async def async_main(
         out_dir=output_dir,
         stream_buffer_size=stream_buffer_size,
         chunk_timeout=chunk_timeout,
+        verify=verify,
         client_kwargs=None,
     ) as loader:
         if stream:
@@ -156,6 +158,14 @@ def cli(
         int | None,
         typer.Option("--buffer", "-b", help="Maximum stream buffer size in bytes."),
     ] = None,
+    verify: Annotated[
+        bool,
+        typer.Option(
+            "--verify/--no-verify",
+            "-V/-N",
+            help="Verify the downloaded file hash. Use --no-verify to skip check.",
+        ),
+    ] = True,
     version: Annotated[
         bool | None,
         typer.Option("--version", "-v", callback=version_callback, is_eager=True),
@@ -189,6 +199,7 @@ def cli(
                 md5=md5,
                 chunk_timeout=chunk_timeout,
                 stream_buffer_size=stream_buffer_size,
+                verify=verify,
             )
         )
     except KeyboardInterrupt:

@@ -134,19 +134,45 @@ async def log(
     timestamp = datetime.now().strftime("[%H:%M:%S]")
     formatted_msg = f"{timestamp} {message}"
 
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, write_log, ctx, formatted_msg)
-    renderable = formatted_msg
+    if ctx.log_file:
+        clean_msg = Text.from_markup(str(formatted_msg)).plain
+        ctx.log_queue.put_nowait(clean_msg)
 
     if ctx.quiet:
         return
 
+    renderable = formatted_msg
     if ctx.progress:
         renderable = formatting_log(message, renderable, status)
         if progress or status in ["WARNING", "ERROR", "CRITICAL", "INTERRUPT"]:
             ctx.progress.console.print(renderable)
     else:
         ctx.console.print(Text.from_markup(str(renderable)).plain)
+
+
+async def log_worker(ctx: UIState) -> None:
+    """
+    Фоновый воркер. Живет всё время работы программы.
+    Берет строки из очереди и пишет в ОТКРЫТЫЙ файл.
+    """
+    if not ctx.log_fd:
+        return
+
+    while True:
+        msg = await ctx.log_queue.get()
+
+        # Ядовитая пилюля для остановки логгера
+        if msg is None:
+            ctx.log_queue.task_done()
+            break
+
+        try:
+            ctx.log_fd.write(f"{msg}\n")
+            ctx.log_fd.flush()  # Гарантируем, что строка сразу упала на диск
+        except OSError:
+            pass  # Если диск отвалился, просто глотаем ошибку
+        finally:
+            ctx.log_queue.task_done()
 
 
 def add_file(ctx: UIState, filename: str, total_size: int | None = None) -> None:
@@ -333,6 +359,15 @@ async def handle_exit(ctx: UIState, cancelled: bool = False) -> None:
 
 
 async def ui_start(ctx: UIState) -> None:
+    # 1. ОТКРЫВАЕМ ФАЙЛ ЛОГОВ И ЗАПУСКАЕМ ВОРКЕРА
+    if ctx.log_file:
+        try:
+            # Открываем в режиме Append (дозапись)
+            ctx.log_fd = ctx.log_file.open("a", encoding="utf-8")
+            ctx.log_task = asyncio.create_task(log_worker(ctx))
+        except OSError:
+            ctx.log_fd = None
+
     if not (ctx.no_ui or ctx.quiet):
         ctx.progress = Progress(
             SpinnerColumn("aesthetic"),
@@ -366,10 +401,22 @@ async def ui_start(ctx: UIState) -> None:
         ctx.live.start()
         ctx.refresh = asyncio.create_task(refresh_loop(ctx))
     ctx.start_time = time.monotonic()
-    write_log(ctx, "--- Session Started ---")
+    await log(ctx, "--- Session Started ---")
     await date_print(ctx)
 
 
 async def ui_stop(ctx: UIState) -> None:
     await handle_exit(ctx)
-    write_log(ctx, "--- Session Finished ---")
+    await log(ctx, "--- Session Finished ---")
+
+    # 2. КОРРЕКТНО ГАСИМ ЛОГГЕР
+    if ctx.log_task:
+        # Отправляем ядовитую пилюлю
+        ctx.log_queue.put_nowait(None)
+        # Ждем, пока логгер допишет все оставшиеся в очереди строки на диск
+        await ctx.log_task
+
+    # 3. ЗАКРЫВАЕМ ФАЙЛОВЫЙ ДЕСКРИПТОР
+    if ctx.log_fd:
+        ctx.log_fd.close()
+        ctx.log_fd = None

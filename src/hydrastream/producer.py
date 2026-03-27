@@ -30,8 +30,14 @@ async def chunk_producer(
             if not meta:
                 await ctx.file_discovery_queue.put(None)
                 continue
+
             filename, total_size, supports_ranges = meta
-            checksum = await _resolve_md5(ctx, url, filename, checksums_map.get(url))
+            checksum = None
+
+            if ctx.config.verify:
+                checksum = await _resolve_md5(
+                    ctx, url, filename, checksums_map.get(url)
+                )
             file_obj = await _prepare_file_object(
                 ctx,
                 url=url,

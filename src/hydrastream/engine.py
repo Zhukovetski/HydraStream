@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import hashlib
 import heapq
+import math
 import random
 import signal
 from collections.abc import AsyncGenerator, Iterable
@@ -229,11 +230,16 @@ async def run_downloads(
     ctx.autosave_task = asyncio.create_task(
         autosave(ctx, interval=60), name="Autosaver"
     )
+    num_workers = (
+        math.ceil(ctx.config.threads * 1.2)
+        if ctx.config.threads > 1
+        else ctx.config.threads
+    )
     ctx.workers = [
         asyncio.create_task(
             delayed_worker(ctx, random.uniform(0, 0.5)), name=f"Worker: {i}"
         )
-        for i in range(ctx.config.threads)
+        for i in range(num_workers)
     ]
 
     try:

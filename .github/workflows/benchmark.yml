@@ -57,31 +57,31 @@ jobs:
       - name: Benchmark 6 - HydraStream (1 connections)
         run: |
           echo "Testing HydraStream..."
-          time hs $TEST_URL -q -o ./
+          time hs $TEST_URL -q -N -o ./
           rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
 
       - name: Benchmark 7 - HydraStream (5 connections)
         run: |
           echo "Testing HydraStream..."
-          time hs $TEST_URL -t 5 -q -o ./
+          time hs $TEST_URL -t 5 -N -q -o ./
           rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
 
       - name: Benchmark 8 - HydraStream (10 connections)
         run: |
           echo "Testing HydraStream..."
-          time hs $TEST_URL -t 10 -q -o ./
+          time hs $TEST_URL -t 10 -N -q -o ./
           rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
 
       - name: Benchmark 9 - HydraStream (15 connections)
         run: |
           echo "Testing HydraStream..."
-          time hs $TEST_URL -t 15 -q -o ./
+          time hs $TEST_URL -t 15 -N -q -o ./
           rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
 
       - name: Benchmark 10 - HydraStream (20 connections)
         run: |
           echo "Testing HydraStream..."
-          time hs $TEST_URL -t 20 -q -o ./
+          time hs $TEST_URL -t 20 -N -q -o ./
           rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
 
       - name: Benchmark 11 - hf_transfer (Rust-based)

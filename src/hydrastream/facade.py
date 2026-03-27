@@ -20,6 +20,7 @@ class HydraClient:
         out_dir: str = "download",
         chunk_timeout: float = 120,
         stream_buffer_size: int | None = None,
+        verify: bool = True,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
         self.config = HydraConfig(
@@ -29,6 +30,7 @@ class HydraClient:
             out_dir=out_dir,
             chunk_timeout=chunk_timeout,
             stream_buffer_size=stream_buffer_size,
+            verify=verify,
             client_kwargs=client_kwargs,
         )
         self.state: HydraContext

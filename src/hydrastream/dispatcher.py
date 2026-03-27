@@ -163,11 +163,9 @@ async def requeue_chunk(
                 await loop.run_in_executor(
                     None, os.ftruncate, fd, file_obj.meta.content_length
                 )
-
+    await ctx.chunk_queue.put((-1, chunk))
     delay = random.uniform(*delay_range)
     await asyncio.sleep(delay)
-
-    await ctx.chunk_queue.put((-1, chunk))
 
 
 async def disk_process_chunk(

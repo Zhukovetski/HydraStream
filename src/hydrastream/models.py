@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import os
 import sys
+import typing
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -243,8 +244,15 @@ class UIState:
     buffer: defaultdict[str, int] = field(default_factory=lambda: defaultdict(int))
     active_files: set[str] = field(default_factory=set[str])
 
+    log_fd: typing.TextIO | None = field(default=None, init=False, repr=False)
+    log_queue: asyncio.Queue[str | None] = field(
+        default_factory=asyncio.Queue[str | None], init=False
+    )
+    log_task: asyncio.Task[None] | None = field(default=None, init=False)
+
     refresh: asyncio.Task[None] | None = None
     progress: Progress | None = None
+
     live: Live | None = None
 
     def __post_init__(self) -> None:
@@ -326,6 +334,7 @@ class HydraConfig:
     out_dir: str = "download"
     chunk_timeout: float = 120
     stream_buffer_size: int | None = None
+    verify: bool = True
     client_kwargs: dict[str, Any] | None = None
 
 
