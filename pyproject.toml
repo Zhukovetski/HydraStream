@@ -124,7 +124,7 @@ hydrastream = { workspace = true }
 [tool.ruff]
 src = ["src"]
 line-length = 88         # Максимальная длина строки (стандарт Black)
-target-version = "py311" # Оптимизируем код под фичи Python 3.11+
+target-version = "py310" # Оптимизируем код под фичи Python 3.11+
 
 [tool.ruff.lint]
 # Включаем жесткие наборы правил проверок:
