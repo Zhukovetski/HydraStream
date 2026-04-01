@@ -18,13 +18,8 @@ from curl_cffi import CurlError, Headers, Response
 from curl_cffi.requests import RequestsError
 from curl_cffi.requests.session import HttpMethod, RequestParams
 
-from hydrastream.constants import (
-    HTTP_BAD_REQUEST_THRESHOLD,
-    HTTP_TOO_MANY_REQUESTS,
-    SCALE_UP_PROBABILITY,
-)
-from hydrastream.models import AMIDState, NetworkState
-from hydrastream.monitor import log
+from .models import AMIDState, NetworkState
+from .monitor import log
 
 
 async def report_429(ctx: AMIDState, retry_after: float | None = None) -> None:
@@ -108,7 +103,7 @@ async def _evaluate_failure(
             return None
 
         server_delay = _get_retry_after(response)
-        if response.status_code == HTTP_TOO_MANY_REQUESTS:
+        if response.status_code == 429:
             await report_429(ctx.rate_limiter, server_delay)
 
         delay = (
@@ -156,8 +151,8 @@ async def safe_request(
         async with acquire(ctx.rate_limiter):
             try:
                 resp = await ctx.client.request(method, url, **kwargs)  # type: ignore
-                if resp.status_code < HTTP_BAD_REQUEST_THRESHOLD:
-                    if random.random() < SCALE_UP_PROBABILITY:
+                if resp.status_code < 400:
+                    if random.random() < 0.1:
                         await try_scale_up(ctx.rate_limiter)
                     return resp
 
@@ -188,7 +183,6 @@ async def safe_request(
 async def stream_chunk(
     ctx: NetworkState,
     url: str,
-    chunk_timeout: float | None,
     headers: dict[str, str] | None = None,
 ) -> AsyncIterator[Response]:
     for attempt in range(1, ctx.max_retries + 1):
@@ -196,20 +190,17 @@ async def stream_chunk(
         yielded = False
         async with acquire(ctx.rate_limiter):
             try:
-                async with asyncio.timeout(chunk_timeout):
-                    async with ctx.client.stream(
-                        "GET", url, headers=headers
-                    ) as response:
-                        if response.status_code < HTTP_BAD_REQUEST_THRESHOLD:
-                            if random.random() < SCALE_UP_PROBABILITY:
-                                await try_scale_up(ctx.rate_limiter)
-                            yielded = True
-                            yield response
-                            return
+                async with ctx.client.stream("GET", url, headers=headers) as response:
+                    if response.status_code < 400:
+                        if random.random() < 0.1:
+                            await try_scale_up(ctx.rate_limiter)
+                        yielded = True
+                        yield response
+                        return
 
-                    delay = await _evaluate_failure(
-                        ctx, url, attempt, response=response, exc=None
-                    )
+                delay = await _evaluate_failure(
+                    ctx, url, attempt, response=response, exc=None
+                )
 
             except Exception as exc:
                 if yielded:

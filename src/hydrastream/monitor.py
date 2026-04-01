@@ -3,10 +3,11 @@
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import orjson
 from rich.console import Group
 from rich.live import Live
 from rich.panel import Panel
@@ -27,8 +28,7 @@ from rich.rule import Rule
 from rich.table import Column, Table
 from rich.text import Text
 
-from hydrastream.constants import COLOR_PIVOT_PERCENT, MINUTES_PER_HOUR, ONE_GIBIBYTE
-from hydrastream.models import UIState
+from .models import UIState
 
 STATUS = Literal["SUCCESS", "INFO", "WARNING", "ERROR", "CRITICAL", "INTERRUPT"]
 
@@ -39,7 +39,7 @@ def truncate_filename(name: str, w: int = 30) -> str:
 
 def get_gradient_color(percentage: float) -> str:
     p = max(0, min(100, percentage or 0))
-    if p < COLOR_PIVOT_PERCENT:
+    if p < 50:
         r, g, b = 255, int((p / 50) * 255), 0
     else:
         r, g, b = int(255 - ((p - 50) / 50) * 255), 255, 0
@@ -123,6 +123,7 @@ async def log(
     progress: bool = False,
     throttle_key: str | None = None,
     throttle_sec: float = 10.0,
+    **kwargs: object,
 ) -> None:
     if throttle_key:
         now = time.monotonic()
@@ -130,18 +131,32 @@ async def log(
         if now - last_time < throttle_sec:
             return
         ctx.log_throttle[throttle_key] = now
-
-    timestamp = datetime.now().strftime("[%H:%M:%S]")
-    formatted_msg = f"{timestamp} {message}"
+    if ctx.json_logs:
+        # Собираем словарь для JSON
+        log_record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": status.upper(),
+            "message": message,
+            **kwargs,  # Распаковываем дополнительные данные!
+        }
+        # Сериализуем в байты, потом в строку
+        final_msg = orjson.dumps(log_record).decode("utf-8")
+    else:
+        timestamp = datetime.now().strftime("[%H:%M:%S]")
+        final_msg = f"{timestamp} {message}"
 
     if ctx.log_file:
-        clean_msg = Text.from_markup(str(formatted_msg)).plain
+        clean_msg = Text.from_markup(str(final_msg)).plain
         ctx.log_queue.put_nowait(clean_msg)
 
     if ctx.quiet:
         return
 
-    renderable = formatted_msg
+    if ctx.json_logs:
+        ctx.console.print(final_msg)
+        return
+
+    renderable = final_msg
     if ctx.progress:
         renderable = formatting_log(message, renderable, status)
         if progress or status in ["WARNING", "ERROR", "CRITICAL", "INTERRUPT"]:
@@ -278,7 +293,7 @@ def make_panel(ctx: UIState) -> Panel | str:
 
     mins, secs = divmod(int(elapsed), 60)
     hours = 0
-    if mins >= MINUTES_PER_HOUR:
+    if mins >= 60:
         hours, mins = divmod(mins, 60)
     time_str = f"{hours:02d}:{mins:02d}:{secs:02d}"
 
@@ -290,11 +305,11 @@ def make_panel(ctx: UIState) -> Panel | str:
 
     r_mins, r_secs = divmod(int(remain_time), 60)
     r_hours = 0
-    if r_mins >= MINUTES_PER_HOUR:
+    if r_mins >= 60:
         r_hours, r_mins = divmod(r_mins, 60)
     remain_time_str = f"{r_hours:02d}:{r_mins:02d}:{r_secs:02d}"
 
-    if ctx.total_bytes < ONE_GIBIBYTE:
+    if ctx.total_bytes < 1_073_741_824:
         size_str = (
             f"{ctx.download_bytes / (1024**2):.2f}/{ctx.total_bytes / (1024**2):.2f} MB"
         )
@@ -346,7 +361,7 @@ async def handle_exit(ctx: UIState, cancelled: bool = False) -> None:
     elapsed = time.monotonic() - ctx.start_time
     avg_speed = (ctx.download_bytes / elapsed) / (1024**2) if elapsed > 0 else 0
 
-    if ctx.total_bytes < ONE_GIBIBYTE:
+    if ctx.total_bytes < 1_073_741_824:
         size_str = (
             f"{ctx.download_bytes / (1024**2):.2f}/{ctx.total_bytes / (1024**2):.2f} MB"
         )

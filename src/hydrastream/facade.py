@@ -18,7 +18,6 @@ class HydraClient:
         no_ui: bool = False,
         quiet: bool = False,
         out_dir: str = "download",
-        chunk_timeout: float = 120,
         stream_buffer_size: int | None = None,
         verify: bool = True,
         client_kwargs: dict[str, Any] | None = None,
@@ -28,12 +27,11 @@ class HydraClient:
             no_ui=no_ui,
             quiet=quiet,
             out_dir=out_dir,
-            chunk_timeout=chunk_timeout,
             stream_buffer_size=stream_buffer_size,
             verify=verify,
             client_kwargs=client_kwargs,
         )
-        self.state: HydraContext
+        self.state: HydraContext | None = None
 
     async def __aenter__(self) -> Self:
         return self
@@ -44,8 +42,9 @@ class HydraClient:
         _exc: BaseException | None,
         _tb: TracebackType | None,
     ) -> None:
-        loop = asyncio.get_running_loop()
-        await teardown_engine(self.state, loop)
+        if self.state is not None:
+            loop = asyncio.get_running_loop()
+            await teardown_engine(self.state, loop)
 
     async def run(
         self,

@@ -3,12 +3,14 @@
 
 import asyncio
 import sys
+from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlparse
 
 import typer
 
-from hydrastream import __version__
-from hydrastream.facade import HydraClient
+from . import __version__
+from .facade import HydraClient
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -19,6 +21,51 @@ def version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def is_valid_url(url: str) -> bool:
+    """Проверяет, является ли строка корректным URL."""
+    try:
+        result = urlparse(url)
+        # Урл считается валидным, если есть протокол (http/https) и домен
+        return all([result.scheme in ("http", "https"), result.netloc])
+    except ValueError:
+        return False
+
+
+def parse_urls(links_from_args: list[str] | None, filepath: str | None) -> list[str]:
+    all_links: list[str] = []
+
+    # 1. Ссылки из аргументов
+    if links_from_args:
+        all_links.extend([url for url in links_from_args if is_valid_url(url)])
+
+    # 2. Обработка файла или stdin
+    if filepath:
+        try:
+            if filepath == "-":
+                source = sys.stdin
+                # Читаем до конца ввода (Ctrl+D)
+                for line in source:
+                    process_line(line, all_links)
+            else:
+                with Path(filepath).open(encoding="utf-8") as f:
+                    for line in f:
+                        process_line(line, all_links)
+        except (FileNotFoundError, PermissionError) as e:
+            print(f"Ошибка при чтении файла: {e}", file=sys.stderr)
+
+    return list(set(all_links))
+
+
+def process_line(line: str, links_list: list[str]) -> None:
+    """Очищает строку и добавляет валидные ссылки в список."""
+    clean_line = line.strip()
+    if clean_line and not clean_line.startswith("#"):
+        # split()[0] берет первое слово, если в строке есть лишний мусор
+        url = clean_line.split()[0]
+        if is_valid_url(url):
+            links_list.append(url)
+
+
 async def async_main(
     links: list[str],
     stream: bool,
@@ -27,8 +74,7 @@ async def async_main(
     quiet: bool,
     output_dir: str,
     md5: str | None,
-    chunk_timeout: float,
-    stream_buffer_size: int | None,
+    stream_buffer_size_mb: int | None,
     verify: bool,
 ) -> None:
     """
@@ -63,8 +109,7 @@ async def async_main(
         no_ui=no_ui,
         quiet=quiet,
         out_dir=output_dir,
-        stream_buffer_size=stream_buffer_size,
-        chunk_timeout=chunk_timeout,
+        stream_buffer_size_mb=stream_buffer_size_mb,
         verify=verify,
         client_kwargs=None,
     ) as loader:
@@ -115,6 +160,10 @@ def cli(
     links: Annotated[
         list[str], typer.Argument(help="List of target URLs to download.")
     ],
+    input_file: Annotated[
+        str | None,
+        typer.Option("-i", "--input", help="Read URLs from file or '-' for stdin"),
+    ] = None,
     md5: Annotated[
         str | None,
         typer.Option(
@@ -151,10 +200,13 @@ def cli(
         bool,
         typer.Option("--quiet", "-q", help="Dead silence. No console output at all."),
     ] = False,
-    chunk_timeout: Annotated[
-        float, typer.Option(help="Connection timeout in seconds for chunk downloads.")
-    ] = 120,
-    stream_buffer_size: Annotated[
+    json_logs: Annotated[
+        bool,
+        typer.Option(
+            "--json", "-j", help="Output logs in JSON Lines format (for machines)."
+        ),
+    ] = False,
+    stream_buffer_size_mb: Annotated[
         int | None,
         typer.Option("--buffer", "-b", help="Maximum stream buffer size in bytes."),
     ] = None,
@@ -197,8 +249,7 @@ def cli(
                 quiet=quiet,
                 output_dir=output_dir,
                 md5=md5,
-                chunk_timeout=chunk_timeout,
-                stream_buffer_size=stream_buffer_size,
+                stream_buffer_size_mb=stream_buffer_size_mb,
                 verify=verify,
             )
         )

@@ -8,15 +8,15 @@ import heapq
 import math
 import random
 import signal
+from _hashlib import HASH
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from typing import TypeVarTuple, Unpack
 
-from hydrastream.dispatcher import download_worker
-from hydrastream.models import Checksum, HydraContext, TypeHash
-from hydrastream.monitor import done, log, ui_start, ui_stop
-from hydrastream.network import close
-from hydrastream.producer import chunk_producer, dispatch_chunks
-from hydrastream.storage import save_all_states, verify_stream
+from .dispatcher import download_worker
+from .models import Checksum, File, HydraContext, TypeHash
+from .monitor import done, log, ui_start, ui_stop
+from .network import close
+from .producer import chunk_producer, dispatch_chunks
 
 Ts = TypeVarTuple("Ts")
 
@@ -36,7 +36,7 @@ async def autosave(ctx: HydraContext, interval: float) -> None:
     while ctx.is_running:
         try:
             await asyncio.sleep(interval)
-            await loop.run_in_executor(None, save_all_states, ctx.fs, ctx.files)
+            await loop.run_in_executor(None, save_all_states, ctx, ctx.files)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -115,9 +115,9 @@ async def teardown_engine(ctx: HydraContext, loop: asyncio.AbstractEventLoop) ->
 
     # Закрываем ресурсы
     if not ctx.stream:
-        save_all_states(ctx.fs, ctx.files)
+        save_all_states(ctx, ctx.files)
         for file_obj in ctx.files.values():
-            file_obj.close_fd()
+            ctx.fs.close_file(file_obj.fd)
 
     await ui_stop(ctx.ui)
 
@@ -324,3 +324,28 @@ async def run_downloads(
 
     finally:
         await teardown_engine(ctx, loop)
+
+
+def save_all_states(ctx: HydraContext, files: dict[int, File]) -> None:
+    for file in list(files.values()):
+        if file.chunks and not all(c.current_pos > c.end for c in (file.chunks or [])):
+            ctx.fs.save_state(file)
+
+
+def verify_stream(
+    md5_hasher: HASH, expected_checksum: str, next_offset: int, total_size: int
+) -> None:
+    calculated = md5_hasher.hexdigest()
+    if calculated != expected_checksum:
+        err_msg = (
+            f"CRITICAL: Stream Integrity Check Failed!\n"
+            f"Expected MD5: {expected_checksum}\n"
+            f"Got MD5:      {calculated}"
+        )
+        raise ValueError(err_msg)
+
+    if next_offset != total_size:
+        raise ValueError(
+            f"Incomplete stream data! Yielded {next_offset} bytes,"
+            f" but expected {total_size} bytes."
+        )

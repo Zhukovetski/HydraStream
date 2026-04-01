@@ -2,13 +2,11 @@
 # Licensed under the MIT License.
 
 import asyncio
-import contextlib
-import os
 import sys
 import typing
 import weakref
 from collections import defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import InitVar, dataclass, field, replace
 from pathlib import Path
 from typing import (
     Any,
@@ -38,7 +36,7 @@ from rich.progress import (
     TaskID,
 )
 
-from hydrastream.constants import MIN_CHUNK
+from .interfaces import LocalStorageManager, StorageBackend
 
 TypeHash = Literal[
     "md5",
@@ -221,18 +219,13 @@ class File:
 
         return cls(**data)
 
-    def close_fd(self) -> None:
-        if self.fd is not None:
-            with contextlib.suppress(OSError):
-                os.close(self.fd)
-            self.fd = None
-
 
 @entity
 class UIState:
     log_file: Path
     no_ui: bool = False
     quiet: bool = False
+    json_logs: bool = False
     speed_limit: float | None = None
 
     is_running: bool = True
@@ -353,10 +346,32 @@ class HydraConfig:
     quiet: bool = False
     out_dir: str = "download"
     speed_limit: float | None = None
-    chunk_timeout: float = 120
-    stream_buffer_size: int | None = None
+    json_logs: bool = False
     verify: bool = True
+
+    min_chunk_size_mb: InitVar[int] = 1
+    min_stream_chunk_size_mb: InitVar[int] = 5
+    stream_buffer_size_mb: InitVar[int | None] = None
     client_kwargs: dict[str, Any] | None = None
+
+    MIN_CHUNK: int = field(init=False)  # 1MB
+    STREAM_CHUNK_SIZE: int = field(init=False)  # 5MB
+    STREAM_BUFFER_SIZE: int | None = None
+
+    def __post_init__(
+        self,
+        min_chunk_size_mb: int,
+        min_stream_chunk_size_mb: int,
+        stream_buffer_size_mb: int | None,
+    ) -> None:
+        object.__setattr__(self, "MIN_CHUNK", min_chunk_size_mb * 1024 * 1024)
+        object.__setattr__(
+            self, "STREAM_CHUNK_SIZE", min_stream_chunk_size_mb * 1024 * 1024
+        )
+        if stream_buffer_size_mb:
+            object.__setattr__(
+                self, "STREAM_BUFFER_SIZE", stream_buffer_size_mb * 1024 * 1024
+            )
 
 
 @entity
@@ -370,7 +385,7 @@ class HydraContext:
 
     net: NetworkState = field(init=False)
     ui: UIState = field(init=False)
-    fs: StorageState = field(init=False)
+    fs: StorageBackend = field(init=False)
 
     heap_size: int = field(init=False)
 
@@ -393,14 +408,15 @@ class HydraContext:
     autosave_task: asyncio.Task[None] | None = None
 
     def __post_init__(self) -> None:
+        self.fs = LocalStorageManager(out_dir=Path(self.config.out_dir))
         self.links_queue = asyncio.PriorityQueue()
         self.chunk_queue = asyncio.PriorityQueue()
         self.stream_queue = asyncio.Queue()
         self.condition = asyncio.Condition()
 
         maxsize = (
-            self.config.stream_buffer_size // MIN_CHUNK
-            if self.config.stream_buffer_size
+            self.config.STREAM_BUFFER_SIZE // self.config.MIN_CHUNK
+            if self.config.STREAM_BUFFER_SIZE
             else 0
         )
         maxsize = (
@@ -411,6 +427,7 @@ class HydraContext:
             is_running=self.is_running,
             no_ui=self.config.no_ui,
             quiet=self.config.quiet,
+            json_logs=self.config.json_logs,
             speed_limit=self.config.speed_limit,
             log_file=Path(self.config.out_dir) / "download.log",
         )

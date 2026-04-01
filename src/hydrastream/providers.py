@@ -5,8 +5,8 @@ import base64
 import binascii
 from typing import Protocol
 
-from hydrastream.models import Checksum, NetworkState
-from hydrastream.network import safe_request
+from .models import Checksum, NetworkState
+from .network import safe_request
 
 
 # 1. КОНТРАКТ: Любой класс, у которого есть метод resolve, считается Провайдером!

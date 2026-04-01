@@ -7,12 +7,10 @@ import random
 from curl_cffi import Headers, Response
 from curl_cffi.requests import RequestsError
 
-from hydrastream.constants import MIN_CHUNK, STREAM_CHUNK_SIZE
-from hydrastream.models import Checksum, File, FileMeta, HydraContext, TypeHash
-from hydrastream.monitor import add_file, done, log, update
-from hydrastream.network import extract_filename, safe_request, stream_chunk
-from hydrastream.providers import ProviderRouter
-from hydrastream.storage import create_sparse_file, load_state, open_file
+from .models import Checksum, File, FileMeta, HydraContext, TypeHash
+from .monitor import add_file, done, log, update
+from .network import extract_filename, safe_request, stream_chunk
+from .providers import ProviderRouter
 
 
 async def chunk_producer(
@@ -43,7 +41,7 @@ async def chunk_producer(
                 checksum=checksum,
             )
             if not ctx.stream:
-                file_obj.fd = open_file(ctx.fs, filename=file_obj.meta.filename)
+                file_obj.fd = ctx.fs.open_file(filename=file_obj.meta.filename)
 
             await _register_file(ctx, file_obj, id)
 
@@ -104,7 +102,7 @@ async def _fetch_metadata(ctx: HydraContext, url: str) -> tuple[str, int, bool]:
     # 2. Если HEAD не дал инфы, используем GET, но ОБЯЗАТЕЛЬНО через stream
     if response is None or int(response.headers.get("content-length", 0)) == 0:
         # Контекстный менеджер 'async with' сам закроет соединение в конце
-        async with stream_chunk(ctx.net, url, ctx.config.chunk_timeout) as resp:
+        async with stream_chunk(ctx.net, url) as resp:
             headers = resp.headers
             return parse_headers(url, headers)
 
@@ -150,9 +148,9 @@ async def _prepare_file_object(  # noqa
     checksum: Checksum | None,
 ) -> File:
     parts = ctx.config.threads
-    chunk_size = max(total_size // parts, MIN_CHUNK)
-    if ctx.stream and chunk_size > STREAM_CHUNK_SIZE:
-        chunk_size = STREAM_CHUNK_SIZE
+    chunk_size = max(total_size // parts, ctx.config.MIN_CHUNK)
+    if ctx.stream and chunk_size > ctx.config.STREAM_CHUNK_SIZE:
+        chunk_size = ctx.config.STREAM_CHUNK_SIZE
 
     if ctx.stream:
         return File(
@@ -168,7 +166,7 @@ async def _prepare_file_object(  # noqa
         )
     file_obj = None
     if supports_ranges:
-        file_obj, num_states = load_state(ctx.fs, filename=filename)
+        file_obj, num_states = ctx.fs.load_state(filename=filename)
         if num_states > 1:
             await log(
                 ctx.ui, f"Multiple state files found for {filename}!", status="WARNING"
@@ -177,7 +175,7 @@ async def _prepare_file_object(  # noqa
     if file_obj:
         return file_obj
 
-    new_filename = create_sparse_file(ctx.fs, filename=filename, size=total_size)
+    new_filename = ctx.fs.allocate_space(filename=filename, size=total_size)
     if new_filename:
         await log(
             ctx.ui,

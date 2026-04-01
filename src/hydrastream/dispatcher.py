@@ -5,24 +5,14 @@ import asyncio
 import contextlib
 import os
 import random
-import sys
 from typing import cast
 
 from curl_cffi import Response
 from curl_cffi.requests import RequestsError
 
-from hydrastream.constants import STREAM_CHUNK_SIZE
 from hydrastream.models import Chunk, HydraContext
 from hydrastream.monitor import done, log, update
 from hydrastream.network import stream_chunk
-from hydrastream.storage import (
-    del_file,
-    delete_state,
-    open_file,
-    verify_file_hash,
-    verify_size,
-    write_chunk_data,
-)
 
 
 async def file_done(ctx: HydraContext, chunk: Chunk) -> None:
@@ -36,14 +26,19 @@ async def file_done(ctx: HydraContext, chunk: Chunk) -> None:
             return
 
         chunk.file.verified = True
-        if not verify_size(ctx.fs, file_obj):
+        if not ctx.fs.verify_size(filename, file_obj.meta.content_length):
             return
         await log(
             ctx.ui,
             f"Verifying MD5 checksum for {chunk.file.meta.filename}...",
             status="INFO",
         )
-        await verify_file_hash(ctx.fs, file_obj)
+        if file_obj.meta.expected_checksum:
+            await ctx.fs.verify_file_hash(
+                file_obj.meta.filename,
+                file_obj.meta.expected_checksum.value,
+                file_obj.meta.expected_checksum.algorithm,
+            )
         await log(
             ctx.ui,
             f"Integrity confirmed: {chunk.file.meta.filename}",
@@ -53,9 +48,8 @@ async def file_done(ctx: HydraContext, chunk: Chunk) -> None:
         await log(ctx.ui, str(ve), status="ERROR")
         raise
 
-    file_obj.close_fd()
-
-    delete_state(ctx.fs, filename)
+    ctx.fs.close_file(fd_or_conn=file_obj.fd)
+    ctx.fs.delete_state(filename)
     await done(ctx.ui, filename)
     del ctx.files[chunk.file.meta.id]
     ctx.current_file_id.remove(chunk.file.meta.id)
@@ -72,7 +66,7 @@ async def get_chunk(ctx: HydraContext) -> Chunk | None:
         return None
 
     if ctx.stream:
-        max_ahead_bytes = ctx.heap_size * STREAM_CHUNK_SIZE
+        max_ahead_bytes = ctx.heap_size * ctx.config.STREAM_CHUNK_SIZE
 
         # Если чанк из "слишком далекого будущего" - ждем!
         if chunk.current_pos > ctx.next_offset + max_ahead_bytes:
@@ -113,7 +107,7 @@ async def download_worker(ctx: HydraContext) -> None:
                         status="ERROR",
                     )
                     chunk.file.is_failed = True
-                    del_file(ctx.fs, chunk.file)
+                    ctx.fs.delete_file(chunk.file.meta.filename)
 
                 # Остальные ошибки сервера (5xx, 429) — пробуем перекинуть чанк
                 # в очередь
@@ -191,14 +185,12 @@ async def disk_process_chunk(
     buffer = bytearray()
     fd = chunk.file.fd
     if fd is None:
-        fd = open_file(ctx.fs, chunk.file.meta.filename)
+        fd = ctx.fs.open_file(chunk.file.meta.filename)
     buffer_size = 1_048_576
-    chunk_timeout = ctx.config.chunk_timeout if headers else sys.maxsize
     async with stream_chunk(
         ctx.net,
         chunk.file.meta.url,
         headers=headers,
-        chunk_timeout=chunk_timeout,
     ) as r:
         try:
             async for data in r.aiter_content(chunk_size=131072):  # type: ignore
@@ -207,13 +199,13 @@ async def disk_process_chunk(
                 update(ctx.ui, chunk.file.meta.filename, len(data))
                 await ctx.ui.limit_event.wait()
                 if len(buffer) >= buffer_size:
-                    await write_chunk_data(fd, buffer, chunk.current_pos)
+                    await ctx.fs.write_chunk_data(fd, buffer, chunk.current_pos)
                     chunk.current_pos += len(buffer)
                     buffer = bytearray()
 
         finally:
             if buffer:
-                await write_chunk_data(fd, buffer, chunk.current_pos)
+                await ctx.fs.write_chunk_data(fd, buffer, chunk.current_pos)
                 chunk.current_pos += len(buffer)
 
 
@@ -221,11 +213,9 @@ async def stream_process_chunk(
     ctx: HydraContext, chunk: Chunk, headers: dict[str, str] | None
 ) -> None:
     buffer = bytearray()
-    chunk_timeout = ctx.config.chunk_timeout if headers else sys.maxsize
     async with stream_chunk(
         ctx.net,
         chunk.file.meta.url,
-        chunk_timeout=chunk_timeout,
         headers=headers,
     ) as r:
         try:

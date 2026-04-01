@@ -150,6 +150,7 @@ fixable =["ALL"]
 
 # PLR2004 - игнорим предупреждения про "магические числа" (иногда цифры в коде это нормально)
 ignore = [
+    "PLR2004",
     "RUF001", # String contains ambiguous unicode character (cyrillic)
     "RUF002", # Docstring contains ambiguous unicode character
     "RUF003", # Comment contains ambiguous unicode character
