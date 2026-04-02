@@ -9,8 +9,8 @@ from urllib.parse import urlparse
 
 import typer
 
-from . import __version__
-from .facade import HydraClient
+from hydrastream import __version__
+from hydrastream.facade import HydraClient
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -73,7 +73,7 @@ async def async_main(
     no_ui: bool,
     quiet: bool,
     output_dir: str,
-    md5: str | None,
+    hash: str | None,
     stream_buffer_size_mb: int | None,
     verify: bool,
 ) -> None:
@@ -87,19 +87,19 @@ async def async_main(
         no_ui (bool): Disable GUI (plain text logs only) if set to True.
         quiet (bool): Dead silence. No console output at all if set to True.
         output_dir (str): Destination directory for downloaded files.
-        md5 (str | None): Expected MD5 checksum (only evaluated if a single link is
+        hash (str | None): Expected hash checksum (only evaluated if a single link is
         provided).
         chunk_timeout (float): Timeout in seconds for individual chunk requests.
         stream_buffer_size (int | None): Maximum buffer size for in-memory streaming.
     """
     expected_checksums: dict[str, str] = {}
 
-    # MD5 logic: only map the hash if a single URL is provided
-    if md5 and len(links) == 1:
-        expected_checksums[links[0]] = md5
-    elif md5 and len(links) > 1:
+    # Hash logic: only map the hash if a single URL is provided
+    if hash and len(links) == 1:
+        expected_checksums[links[0]] = hash
+    elif hash and len(links) > 1:
         typer.secho(
-            "Warning: The --md5 flag is ignored when multiple URLs are provided.",
+            "Warning: The --hash flag is ignored when multiple URLs are provided.",
             fg="yellow",
             err=True,
         )
@@ -126,7 +126,7 @@ async def async_main(
                     err=True,
                 )
 
-                if not md5:
+                if not hash:
                     typer.secho(
                         "Please use a pipe (e.g., '| zcat') or redirect to a file "
                         "(e.g., '> file.gz').\n"
@@ -137,7 +137,7 @@ async def async_main(
                     raise typer.Exit(code=1)
 
                 typer.secho(
-                    "Proceeding in 'Verification Only' mode since --md5 is provided.",
+                    "Proceeding in 'Verification Only' mode since --hash is provided.",
                     fg="cyan",
                     err=True,
                 )
@@ -164,10 +164,10 @@ def cli(
         str | None,
         typer.Option("-i", "--input", help="Read URLs from file or '-' for stdin"),
     ] = None,
-    md5: Annotated[
+    hash: Annotated[
         str | None,
         typer.Option(
-            "--md5", help="Expected MD5 checksum (applicable only for a single URL)."
+            "--hash", help="Expected hash checksum (applicable only for a single URL)."
         ),
     ] = None,
     output_dir: Annotated[
@@ -248,7 +248,7 @@ def cli(
                 no_ui=no_ui,
                 quiet=quiet,
                 output_dir=output_dir,
-                md5=md5,
+                hash=hash,
                 stream_buffer_size_mb=stream_buffer_size_mb,
                 verify=verify,
             )

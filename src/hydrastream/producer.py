@@ -30,7 +30,7 @@ async def chunk_producer(
             checksum = None
 
             if ctx.config.verify:
-                checksum = await _resolve_md5(ctx, url, filename, checksum)
+                checksum = await _resolve_hash(ctx, url, filename, checksum)
             file_obj = await _prepare_file_object(
                 ctx,
                 id=id,
@@ -117,7 +117,7 @@ def parse_headers(url: str, headers: Headers) -> tuple[str, int, bool]:
     return filename, total_size, supports_ranges
 
 
-async def _resolve_md5(
+async def _resolve_hash(
     ctx: HydraContext,
     url: str,
     filename: str,
@@ -208,6 +208,8 @@ async def _register_file(
         downloaded = sum(c.uploaded for c in chunks)
         if downloaded - len(chunks) > 0:
             update(ctx.ui, filename, downloaded)
+    else:
+        await ctx.file_discovery_queue.put(file_obj.meta.id)
 
 
 async def dispatch_chunks(ctx: HydraContext) -> None:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import hashlib
@@ -6,9 +8,10 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from .models import File, TypeHash
+if TYPE_CHECKING:
+    from .models import File, TypeHash
 
 
 class StorageBackend(Protocol):

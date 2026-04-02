@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import asyncio
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,7 +29,7 @@ from rich.rule import Rule
 from rich.table import Column, Table
 from rich.text import Text
 
-from .models import UIState
+from .models import File, UIState
 
 STATUS = Literal["SUCCESS", "INFO", "WARNING", "ERROR", "CRITICAL", "INTERRUPT"]
 
@@ -119,6 +120,7 @@ def formatting_log(
 async def log(
     ctx: UIState,
     message: str | Rule,
+    *,
     status: STATUS = "INFO",
     progress: bool = False,
     throttle_key: str | None = None,
@@ -214,7 +216,7 @@ def add_file(ctx: UIState, filename: str, total_size: int | None = None) -> None
         t_filename = truncate_filename(filename)
         if total_size is None:
             task_id = ctx.progress.add_task(
-                "Download MD5 for", filename=t_filename, total=total_size
+                "Download Hash for", filename=t_filename, total=total_size
             )
         else:
             task_id = ctx.progress.add_task(
@@ -350,6 +352,99 @@ def make_panel(ctx: UIState) -> Panel | str:
         border_style="blue",
         padding=(1, 2),
     )
+
+
+async def print_dry_run_report(
+    ctx: UIState, files: dict[int, File], stream: bool, out_dir: str | Path
+) -> None:
+    """Выводит отчет о том, что БЫЛО БЫ сделано, без фактического скачивания."""
+
+    # 1. Если включен режим JSON логов, отдаем структурированные данные
+    if ctx.json_logs:
+        report_data = {
+            "total_files": ctx.total_files,
+            "total_bytes": ctx.total_bytes,
+            "files": [
+                {
+                    "filename": f.meta.filename,
+                    "size_bytes": f.meta.content_length,
+                    "chunks": len(f.chunks),
+                    "supports_ranges": f.meta.supports_ranges,
+                    "algorithm": f.meta.expected_checksum.algorithm
+                    if f.meta.expected_checksum
+                    else None,
+                    "expected_hash": f.meta.expected_checksum.value
+                    if f.meta.expected_checksum
+                    else None,
+                }
+                for f in files.values()
+            ],
+        }
+        # Отправляем в твой универсальный логгер
+
+        await log(
+            ctx,
+            "DRY_RUN_REPORT",
+            status="INFO",
+            progress=False,
+            throttle_key=None,
+            throttle_sec=10,
+            **report_data,
+        )
+        return
+
+    # 2. Если режим тишины (без JSON), просто выходим
+    if ctx.quiet:
+        return
+
+    # 3. Красивый UI для людей
+    table = Table(
+        title="[bold yellow]🔍 DRY RUN REPORT (No data will be downloaded)[/]"
+    )
+    table.add_column("Filename", style="cyan", no_wrap=True)
+    table.add_column("Size", justify="right")
+    table.add_column("Chunks", justify="right")
+    table.add_column("Hash Found", justify="center")
+    table.add_column("Ranges", justify="center")
+
+    for f in files.values():
+        size_mb = f.meta.content_length / (1024 * 1024)
+
+        has_hash = "✅" if f.meta.expected_checksum else "❌"
+        ranges = "✅" if f.meta.supports_ranges else "❌ (Fallback to 1 thread)"
+
+        table.add_row(
+            f.meta.filename, f"{size_mb:.2f} MB", str(len(f.chunks)), has_hash, ranges
+        )
+
+    # Печатаем таблицу в stderr (чтобы не сломать пайпы)
+    ctx.console.print(table)
+
+    # 4. Проверка свободного места (Только для режима диска)
+    if not stream:
+        # ctx.config.out_dir мы парсим через Path, как ты делал в Storage
+
+        out_dir = Path(out_dir).expanduser().resolve()
+
+        # Если папки еще нет, проверяем место на родительском диске
+        check_dir = out_dir if out_dir.exists() else out_dir.parent
+
+        try:
+            free_space = shutil.disk_usage(check_dir).free
+
+            if free_space < ctx.total_bytes:
+                ctx.console.print("\n[bold red] DANGER: Insufficient disk space![/]")
+                ctx.console.print(
+                    f"[red]Required: {ctx.total_bytes / (1024**3):.2f} GB | "
+                    f"Available: {free_space / (1024**3):.2f} GB[/]"
+                )
+            else:
+                ctx.console.print(
+                    f"\n[bold green] Disk space check passed "
+                    f"({free_space / (1024**3):.2f} GB free).[/]"
+                )
+        except OSError:
+            pass  # Игнорируем ошибки доступа при проверке места
 
 
 async def handle_exit(ctx: UIState, cancelled: bool = False) -> None:

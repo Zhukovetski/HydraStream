@@ -4,11 +4,13 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
-from hydrastream.engine import run_downloads, stream_all, teardown_engine
-from hydrastream.models import HydraConfig, HydraContext, TypeHash
+from .engine import run_downloads, stream_all, teardown_engine
+from .interfaces import LocalStorageManager
+from .models import HydraConfig, HydraContext, TypeHash
 
 
 class HydraClient:
@@ -18,7 +20,7 @@ class HydraClient:
         no_ui: bool = False,
         quiet: bool = False,
         out_dir: str = "download",
-        stream_buffer_size: int | None = None,
+        stream_buffer_size_mb: int | None = None,
         verify: bool = True,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
@@ -27,11 +29,12 @@ class HydraClient:
             no_ui=no_ui,
             quiet=quiet,
             out_dir=out_dir,
-            stream_buffer_size=stream_buffer_size,
+            stream_buffer_size_mb=stream_buffer_size_mb,
             verify=verify,
             client_kwargs=client_kwargs,
         )
         self.state: HydraContext | None = None
+        self.fs = LocalStorageManager(out_dir=Path(self.config.out_dir))
 
     async def __aenter__(self) -> Self:
         return self
@@ -51,7 +54,7 @@ class HydraClient:
         links: list[str] | str,
         expected_checksums: dict[str, tuple[TypeHash, str]] | None = None,
     ) -> None:
-        self.state = HydraContext(config=self.config)
+        self.state = HydraContext(config=self.config, fs=self.fs)
         await run_downloads(self.state, links, expected_checksums)
 
     def stream(
@@ -59,5 +62,5 @@ class HydraClient:
         links: list[str],
         expected_checksums: dict[str, tuple[TypeHash, str]] | None = None,
     ) -> AsyncGenerator[tuple[str, AsyncGenerator[bytes]]]:
-        self.state = HydraContext(config=self.config)
+        self.state = HydraContext(config=self.config, fs=self.fs)
         return stream_all(self.state, links, expected_checksums)

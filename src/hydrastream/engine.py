@@ -14,7 +14,7 @@ from typing import TypeVarTuple, Unpack
 
 from .dispatcher import download_worker
 from .models import Checksum, File, HydraContext, TypeHash
-from .monitor import done, log, ui_start, ui_stop
+from .monitor import done, log, print_dry_run_report, ui_start, ui_stop
 from .network import close
 from .producer import chunk_producer, dispatch_chunks
 
@@ -125,16 +125,15 @@ async def teardown_engine(ctx: HydraContext, loop: asyncio.AbstractEventLoop) ->
         loop.remove_signal_handler(sig)
 
 
-async def _stream_one(ctx: HydraContext, filename: str) -> AsyncGenerator[bytes]:
-    id = ctx.current_file_id[0]
-    file_obj = ctx.files[id]
+async def _stream_one(ctx: HydraContext, file_id: int) -> AsyncGenerator[bytes]:
+    file_obj = ctx.files[file_id]
     total_size = file_obj.meta.content_length
 
     checksum = file_obj.meta.expected_checksum
     hasher = hashlib.new(checksum.algorithm) if checksum else None
 
     ctx.next_offset = 0
-    await log(ctx.ui, f"Streaming: {filename}", status="INFO")
+    await log(ctx.ui, f"Streaming: {file_obj.meta.filename}", status="INFO")
     try:
         while ctx.next_offset < total_size:
             if not ctx.is_running:
@@ -174,7 +173,7 @@ async def _stream_one(ctx: HydraContext, filename: str) -> AsyncGenerator[bytes]
             else:
                 heapq.heappush(ctx.heap, (chunk_start, chunk_data))
         else:
-            await done(ctx.ui, filename)
+            await done(ctx.ui, file_obj.meta.filename)
 
             if hasher and checksum:
                 try:
@@ -186,8 +185,8 @@ async def _stream_one(ctx: HydraContext, filename: str) -> AsyncGenerator[bytes]
 
     finally:
         ctx.heap.clear()
-        del ctx.files[id]
-        ctx.current_file_id.remove(id)
+        del ctx.files[file_id]
+        ctx.current_file_id.remove(file_id)
 
 
 async def create_tasks(
@@ -216,19 +215,21 @@ async def create_tasks(
         ctx.autosave_task = asyncio.create_task(
             autosave(ctx, interval=60), name="Autosaver"
         )
-    if ctx.task_creators:
-        for task in ctx.task_creators:
-            await task
-
-    ctx.dispatcher = asyncio.create_task(dispatch_chunks(ctx), name="Dispather")
-
-    ctx.workers = [
-        asyncio.create_task(
-            delayed_task(ctx, download_worker),
-            name=f"Worker: {i}",
-        )
-        for i in range(num_workers)
-    ]
+    if ctx.config.dry_run:
+        if ctx.task_creators:
+            for task in ctx.task_creators:
+                await task
+        await print_dry_run_report(ctx.ui, ctx.files, ctx.stream, ctx.config.out_dir)
+        ctx.files.clear()
+    else:
+        ctx.dispatcher = asyncio.create_task(dispatch_chunks(ctx), name="Dispather")
+        ctx.workers = [
+            asyncio.create_task(
+                delayed_task(ctx, download_worker),
+                name=f"Worker: {i}",
+            )
+            for i in range(num_workers)
+        ]
 
 
 async def dispatch_links(
@@ -270,19 +271,18 @@ async def stream_all(
     await create_tasks(ctx, links)
 
     try:
-        while ctx.files and ctx.is_running:
-            if not ctx.is_running:
-                break
-            id = ctx.current_file_id[0]
-            filename = ctx.files[id].meta.filename
-            file_gen = _stream_one(ctx, filename)
+        while (ctx.dispatcher or ctx.files) and ctx.is_running:
+            file_id = await ctx.file_discovery_queue.get()
+
+            filename = ctx.files[file_id].meta.filename
+
+            file_gen = _stream_one(ctx, file_id)
 
             yield filename, file_gen
             async with ctx.condition:
                 await ctx.condition.wait_for(
                     lambda id=id: id not in ctx.files or not ctx.is_running
                 )
-
     except asyncio.CancelledError:
         pass
 
@@ -314,7 +314,9 @@ async def run_downloads(
 
     try:
         async with ctx.condition:
-            await ctx.condition.wait_for(lambda: not (ctx.files and ctx.is_running))
+            await ctx.condition.wait_for(
+                lambda: not ((ctx.dispatcher or ctx.files) and ctx.is_running)
+            )
     except asyncio.CancelledError:
         pass
 
@@ -333,19 +335,18 @@ def save_all_states(ctx: HydraContext, files: dict[int, File]) -> None:
 
 
 def verify_stream(
-    md5_hasher: HASH, expected_checksum: str, next_offset: int, total_size: int
+    hasher: HASH, expected_checksum: str, next_offset: int, total_size: int
 ) -> None:
-    calculated = md5_hasher.hexdigest()
-    if calculated != expected_checksum:
-        err_msg = (
-            f"CRITICAL: Stream Integrity Check Failed!\n"
-            f"Expected MD5: {expected_checksum}\n"
-            f"Got MD5:      {calculated}"
-        )
-        raise ValueError(err_msg)
-
     if next_offset != total_size:
         raise ValueError(
             f"Incomplete stream data! Yielded {next_offset} bytes,"
             f" but expected {total_size} bytes."
         )
+    calculated = hasher.hexdigest()
+    if calculated != expected_checksum:
+        err_msg = (
+            f"CRITICAL: Stream Integrity Check Failed!\n"
+            f"Expected Hash: {expected_checksum}\n"
+            f"Got Hash:      {calculated}"
+        )
+        raise ValueError(err_msg)

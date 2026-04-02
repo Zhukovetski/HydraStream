@@ -36,7 +36,7 @@ from rich.progress import (
     TaskID,
 )
 
-from .interfaces import LocalStorageManager, StorageBackend
+from .interfaces import StorageBackend
 
 TypeHash = Literal[
     "md5",
@@ -346,6 +346,7 @@ class HydraConfig:
     quiet: bool = False
     out_dir: str = "download"
     speed_limit: float | None = None
+    dry_run: bool = False
     json_logs: bool = False
     verify: bool = True
 
@@ -385,7 +386,7 @@ class HydraContext:
 
     net: NetworkState = field(init=False)
     ui: UIState = field(init=False)
-    fs: StorageBackend = field(init=False)
+    fs: StorageBackend
 
     heap_size: int = field(init=False)
 
@@ -396,6 +397,7 @@ class HydraContext:
     links_queue: asyncio.PriorityQueue[tuple[int, str, Checksum | None]] = field(
         init=False
     )
+    file_discovery_queue: asyncio.Queue[int] = field(init=False)
     chunk_queue: asyncio.PriorityQueue[tuple[int, Chunk] | tuple[int, Chunk]] = field(
         init=False
     )
@@ -408,9 +410,9 @@ class HydraContext:
     autosave_task: asyncio.Task[None] | None = None
 
     def __post_init__(self) -> None:
-        self.fs = LocalStorageManager(out_dir=Path(self.config.out_dir))
         self.links_queue = asyncio.PriorityQueue()
         self.chunk_queue = asyncio.PriorityQueue()
+        self.file_discovery_queue = asyncio.Queue()
         self.stream_queue = asyncio.Queue()
         self.condition = asyncio.Condition()
 

@@ -10,9 +10,9 @@ from typing import cast
 from curl_cffi import Response
 from curl_cffi.requests import RequestsError
 
-from hydrastream.models import Chunk, HydraContext
-from hydrastream.monitor import done, log, update
-from hydrastream.network import stream_chunk
+from .models import Chunk, HydraContext
+from .monitor import done, log, update
+from .network import stream_chunk
 
 
 async def file_done(ctx: HydraContext, chunk: Chunk) -> None:
@@ -30,7 +30,7 @@ async def file_done(ctx: HydraContext, chunk: Chunk) -> None:
             return
         await log(
             ctx.ui,
-            f"Verifying MD5 checksum for {chunk.file.meta.filename}...",
+            f"Verifying Hash checksum for {chunk.file.meta.filename}...",
             status="INFO",
         )
         if file_obj.meta.expected_checksum:
@@ -224,7 +224,7 @@ async def stream_process_chunk(
                 buffer.extend(data)
                 update(ctx.ui, chunk.file.meta.filename, len(data))
                 await ctx.ui.limit_event.wait()
-                if len(buffer) > STREAM_CHUNK_SIZE:
+                if len(buffer) > ctx.config.STREAM_CHUNK_SIZE:
                     await ctx.stream_queue.put((chunk.current_pos, buffer))
                     chunk.current_pos = chunk.current_pos + len(buffer)
                     buffer = bytearray()
