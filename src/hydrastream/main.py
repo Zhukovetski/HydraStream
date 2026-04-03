@@ -14,7 +14,7 @@ import typer
 
 from hydrastream import __version__
 from hydrastream.facade import HydraClient
-from hydrastream.models import TypeHash
+from hydrastream.models import HydraConfig, TypeHash
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -95,22 +95,10 @@ def parse_urls(links_from_args: list[str] | None, filepath: str | None) -> list[
 
 
 async def async_main(
-    links: list[str] | None,
-    input_file: str | None,
-    typehash: TypeHash,
-    hash: str | None,
+    config: HydraConfig,
     stream: bool,
-    threads: int,
-    no_ui: bool,
-    quiet: bool,
-    output_dir: str,
-    dry_run: bool,
-    min_chunk_size_mb: int,
-    min_stream_chunk_size_mb: int,
-    stream_buffer_size_mb: int | None,
-    speed_limit: float | None,
-    json_logs: bool,
-    verify: bool,
+    valid_links: list[str],
+    expected_checksums: dict[str, tuple[TypeHash, str]],
 ) -> None:
     """
     Core asynchronous orchestrator for downloading or streaming files.
@@ -134,45 +122,12 @@ async def async_main(
         verify: Enable or disable post-download hash verification.
     """  # noqa: E501
 
-    # ВСЕГДА парсим ссылки, чтобы отфильтровать мусор и дубликаты из прямых аргументов!
-    valid_links = parse_urls(links, input_file)
-
-    if not valid_links:
-        typer.secho("No valid URLs found to process!", fg="red", bold=True, err=True)
-        raise typer.Exit(code=1)
-
-    expected_checksums: dict[str, tuple[TypeHash, str]] = {}
-
-    # Hash logic: only map the hash if a single URL is provided
-    if hash and len(valid_links) == 1:
-        expected_checksums[valid_links[0]] = (typehash, hash)
-    elif hash and len(valid_links) > 1:
-        typer.secho(
-            "Warning: The --hash flag is ignored when multiple URLs are provided.",
-            fg="yellow",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    async with HydraClient(
-        threads=threads,
-        dry_run=dry_run,
-        min_chunk_size_mb=min_chunk_size_mb,
-        min_stream_chunk_size_mb=min_stream_chunk_size_mb,
-        speed_limit=speed_limit,
-        no_ui=no_ui,
-        quiet=quiet,
-        output_dir=output_dir,
-        stream_buffer_size_mb=stream_buffer_size_mb,
-        json_logs=json_logs,
-        verify=verify,
-        client_kwargs=None,
-    ) as loader:
+    async with HydraClient(config=config) as loader:
         if stream:
             assert sys.__stdout__ is not None
             is_terminal = sys.__stdout__.isatty()
 
-            if is_terminal and not dry_run:
+            if is_terminal and not config.dry_run:
                 typer.secho(
                     "Warning: You are running in --stream mode but output "
                     "is not redirected!\n"
@@ -336,24 +291,49 @@ def cli(
             except ImportError:
                 pass
 
+        # ВСЕГДА парсим ссылки, чтобы отфильтровать мусор и дубликаты из прямых
+        # аргументов!
+        valid_links = parse_urls(links, input_file)
+
+        if not valid_links:
+            typer.secho(
+                "No valid URLs found to process!", fg="red", bold=True, err=True
+            )
+            raise typer.Exit(code=1)
+
+        expected_checksums: dict[str, tuple[TypeHash, str]] = {}
+
+        # Hash logic: only map the hash if a single URL is provided
+        if hash and len(valid_links) == 1:
+            expected_checksums[valid_links[0]] = (typehash, hash)
+        elif hash and len(valid_links) > 1:
+            typer.secho(
+                "Warning: The --hash flag is ignored when multiple URLs are provided.",
+                fg="yellow",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        config = HydraConfig(
+            threads=threads,
+            dry_run=dry_run,
+            min_chunk_size_mb=min_chunk_size_mb,
+            min_stream_chunk_size_mb=min_stream_chunk_size_mb,
+            speed_limit=speed_limit,
+            no_ui=no_ui,
+            quiet=quiet,
+            output_dir=output_dir,
+            stream_buffer_size_mb=stream_buffer_size_mb,
+            json_logs=json_logs,
+            verify=verify,
+            client_kwargs=None,
+        )
         asyncio.run(
             async_main(
-                links=links,
-                input_file=input_file,
-                typehash=typehash,
-                hash=hash,
+                config=config,
                 stream=stream,
-                threads=threads,
-                dry_run=dry_run,
-                min_chunk_size_mb=min_chunk_size_mb,
-                min_stream_chunk_size_mb=min_stream_chunk_size_mb,
-                speed_limit=speed_limit,
-                no_ui=no_ui,
-                quiet=quiet,
-                output_dir=output_dir,
-                stream_buffer_size_mb=stream_buffer_size_mb,
-                json_logs=json_logs,
-                verify=verify,
+                valid_links=valid_links,
+                expected_checksums=expected_checksums,
             )
         )
     except KeyboardInterrupt:

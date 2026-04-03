@@ -16,6 +16,7 @@ from .models import HydraConfig, HydraContext, TypeHash
 class HydraClient:
     def __init__(
         self,
+        config: HydraConfig | None = None,
         threads: int = 1,
         no_ui: bool = False,
         quiet: bool = False,
@@ -29,20 +30,23 @@ class HydraClient:
         verify: bool = True,
         client_kwargs: dict[str, Any] | None = None,
     ) -> None:
-        self.config = HydraConfig(
-            threads=threads,
-            dry_run=dry_run,
-            min_chunk_size_mb=min_chunk_size_mb,
-            min_stream_chunk_size_mb=min_stream_chunk_size_mb,
-            speed_limit=speed_limit,
-            no_ui=no_ui,
-            quiet=quiet,
-            output_dir=output_dir,
-            stream_buffer_size_mb=stream_buffer_size_mb,
-            json_logs=json_logs,
-            verify=verify,
-            client_kwargs=client_kwargs,
-        )
+        if config:
+            self.config = config
+        else:
+            self.config = HydraConfig(
+                threads=threads,
+                dry_run=dry_run,
+                min_chunk_size_mb=min_chunk_size_mb,
+                min_stream_chunk_size_mb=min_stream_chunk_size_mb,
+                speed_limit=speed_limit,
+                no_ui=no_ui,
+                quiet=quiet,
+                output_dir=output_dir,
+                stream_buffer_size_mb=stream_buffer_size_mb,
+                json_logs=json_logs,
+                verify=verify,
+                client_kwargs=client_kwargs,
+            )
 
         self.state: HydraContext | None = None
         self.fs = LocalStorageManager(output_dir=Path(self.config.output_dir))

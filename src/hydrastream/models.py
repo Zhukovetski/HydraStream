@@ -228,6 +228,7 @@ class UIState:
     dry_run: bool = False
     json_logs: bool = False
     speed_limit: float | None = None
+    verify: bool = True
 
     is_running: bool = True
     console: Console = Console(stderr=True)
@@ -362,11 +363,9 @@ class HydraConfig:
 
 
 def create_done_task() -> asyncio.Task[None]:
-    # Создаем Future
     loop = asyncio.get_event_loop()
     f = loop.create_future()
     f.set_result(None)
-    # Принудительно приводим тип к Task[None]
     return cast(asyncio.Task[None], f)
 
 
@@ -431,6 +430,7 @@ class HydraContext:
             json_logs=self.config.json_logs,
             speed_limit=self.config.speed_limit,
             log_file=Path(self.config.output_dir) / "download.log",
+            verify=self.config.verify,
         )
 
         self.net = NetworkState(

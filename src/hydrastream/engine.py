@@ -317,6 +317,7 @@ async def run_downloads(
                     not ((not ctx.dispatcher.done() or ctx.files) and ctx.is_running)
                 )
             )
+
     except asyncio.CancelledError:
         pass
 

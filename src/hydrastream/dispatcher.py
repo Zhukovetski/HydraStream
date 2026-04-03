@@ -54,6 +54,7 @@ async def file_done(ctx: HydraContext, chunk: Chunk) -> None:
     del ctx.files[chunk.file.meta.id]
     ctx.current_file_id.remove(chunk.file.meta.id)
     if not ctx.files:
+        print(ctx.dispatcher.done())
         async with ctx.condition:
             ctx.condition.notify_all()
 

@@ -419,20 +419,28 @@ async def print_dry_run_report(
     table.add_column("Filename", style="cyan", no_wrap=True)
     table.add_column("Size", justify="right")
     table.add_column("Chunks", justify="right")
-    table.add_column("Hash Found", justify="center")
+    if ctx.verify:
+        table.add_column("Hash Found", justify="center")
     table.add_column("Ranges", justify="center")
 
     for f in files.values():
         f.create_chunks()
         size_mb = f.meta.content_length / (1024 * 1024)
-
-        has_hash = "✅" if f.meta.expected_checksum else "❌"
+        if ctx.verify:
+            has_hash = "✅" if f.meta.expected_checksum else "❌"
         ranges = "✅" if f.meta.supports_ranges else "❌ (Fallback to 1 thread)"
-
-        table.add_row(
-            f.meta.filename, f"{size_mb:.2f} MB", str(len(f.chunks)), has_hash, ranges
-        )
-
+        if ctx.verify:
+            table.add_row(
+                f.meta.filename,
+                f"{size_mb:.2f} MB",
+                str(len(f.chunks)),
+                has_hash,
+                ranges,
+            )
+        else:
+            table.add_row(
+                f.meta.filename, f"{size_mb:.2f} MB", str(len(f.chunks)), ranges
+            )
     # Печатаем таблицу в stderr (чтобы не сломать пайпы)
     ctx.console.print(table)
 

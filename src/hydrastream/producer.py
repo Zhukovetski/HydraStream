@@ -238,3 +238,5 @@ async def dispatch_chunks(ctx: HydraContext) -> None:
                     )
         if ctx.stream:
             await ctx.file_discovery_queue.put(-1)
+        async with ctx.condition:
+            ctx.condition.notify_all()
