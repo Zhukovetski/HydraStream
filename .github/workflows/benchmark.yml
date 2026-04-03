@@ -88,28 +88,23 @@ jobs:
         run: |
           echo "Testing HydraStream..."
           time hs $TEST_URL -q -N  > /dev/null 
-          rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
 
       - name: Benchmark 12 - HydraStream (5 connections, stream)
         run: |
           echo "Testing HydraStream..."
           time hs $TEST_URL -t 5 -N -q  > /dev/null 
-          rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
 
       - name: Benchmark 13 - HydraStream (10 connections, stream)
         run: |
           echo "Testing HydraStream..."
           time hs $TEST_URL -t 10 -N -q  > /dev/null 
-          rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
 
       - name: Benchmark 14 - HydraStream (15 connections, stream)
         run: |
           echo "Testing HydraStream..."
           time hs $TEST_URL -t 15 -N -q  > /dev/null 
-          rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
 
       - name: Benchmark 15 - HydraStream (20 connections, stream)
         run: |
           echo "Testing HydraStream..."
           time hs $TEST_URL -t 20 -N -q  > /dev/null 
-          rm GCF_000001405.40_GRCh38.p14_genomic.fna.gz
