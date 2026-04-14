@@ -191,7 +191,8 @@ async def async_main(  # noqa: C901, PLR0912
                                 ),
                             ),
                         )
-
+                sys.__stdout__.write("-3\n")
+                sys.__stdout__.flush()
                 async for _, file_gen in await loader.stream(
                     links, input_file, expected_checksums
                 ):
@@ -207,7 +208,8 @@ async def async_main(  # noqa: C901, PLR0912
                 await loader.run(links, input_file, expected_checksums)
 
                 sys.exit(ExitCode.SUCCESS)
-
+        sys.__stdout__.write("100\n")
+        sys.__stdout__.flush()
     except (Exception, ExceptionGroup) as e:
         if debug:
             raise

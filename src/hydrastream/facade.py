@@ -54,7 +54,6 @@ class HydraClient:
         fs: StorageBackend | None = None,
         ui: UIState | None = None,
     ) -> None:
-
         if config:
             self.config = config
         else:
@@ -139,6 +138,7 @@ class HydraClient:
         input_file: str | None = None,
         expected_checksums: dict[str, tuple[TypeHash, str] | Checksum] | None = None,
     ) -> AsyncGenerator[tuple[str, AsyncGenerator[memoryview]]]:
+
         links = await self.validate(links, input_file)
         self.state = HydraContext(
             config=self.config, fs=self.fs, provider=self.provider

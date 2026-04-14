@@ -28,7 +28,7 @@ async def delayed_task(
     ctx: HydraContext,
     task: Callable[[HydraContext, Unpack[Ts]], Awaitable[None]],
     *args: *Ts,
-    delay: tuple[float, float] = (0, 0.5),
+    delay: tuple[float, float] = (0, 0.3),
 ) -> None:
     await asyncio.sleep(random.uniform(*delay))
     await task(ctx, *args)
@@ -105,6 +105,7 @@ async def stop(ctx: HydraContext, complete: bool = False) -> None:
 
 
 async def _stream_one(ctx: HydraContext, file_id: int) -> AsyncGenerator[memoryview]:
+
     file_obj = ctx.files[file_id]
     total_size = file_obj.meta.content_length
 
@@ -133,6 +134,7 @@ async def _stream_one(ctx: HydraContext, file_id: int) -> AsyncGenerator[memoryv
                 continue
 
             chunk_start, chunk_data = await ctx.queues.stream.get()
+
             if chunk_start == -1:
                 break
 
@@ -175,7 +177,7 @@ async def _stream_one(ctx: HydraContext, file_id: int) -> AsyncGenerator[memoryv
         ctx.current_files_id.remove(file_id)
         async with ctx.sync.current_files:
             ctx.sync.current_files.notify()
-        if not ctx.files:
+        if not ctx.files and ctx.discovery_completed:
             await ctx.queues.file_discovery.put(-1)
             ctx.sync.all_complete.set()
             ctx.ui.speed.checkpoint_event.set()
@@ -288,9 +290,10 @@ async def stream_all(
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(session_killer(ctx), name="SessionKiller")
                 await create_tasks(ctx, tg, loop, links, expected_checksums)
-
+                file_gen = None
                 while True:
                     file_id = await ctx.queues.file_discovery.get()
+
                     if file_id == -1:
                         break
                     filename = ctx.files[file_id].meta.filename

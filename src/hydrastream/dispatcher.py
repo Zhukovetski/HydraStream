@@ -15,7 +15,6 @@ from curl_cffi.requests import RequestsError
 
 from hydrastream.exceptions import (
     DownloadFailedError,
-    HydraError,
     LogStatus,
     WorkerScaleDown,
 )
@@ -32,10 +31,10 @@ async def telemetry_worker(ctx: HydraContext) -> None:
     ctx.ui.speed.last_checkpoint_time = time.monotonic()
     smoothed_speed = 0.0
     prev_speed = 0.0
-    current_limit = 2
+    current_limit = ctx.dynamic_limit
 
     # Безопасные границы для адаптивного окна
-    tau = 2.0
+    tau = 1.0
     min_window = 1024  # 1 КБ (чтобы не сжечь CPU)
 
     while not ctx.sync.all_complete.is_set():
@@ -44,7 +43,7 @@ async def telemetry_worker(ctx: HydraContext) -> None:
             await ctx.ui.speed.checkpoint_event.wait()
 
             # Сразу проверяем: а не нажали ли рубильник пока мы спали?
-            if ctx.sync.all_complete.is_set():
+            if ctx.sync.stop_telemetry.is_set():
                 break  # Выходим из цикла! Функция завершается, TaskGroup счастлив.
             await ctx.ui.speed.checkpoint_event.wait()
             ctx.ui.speed.checkpoint_event.clear()
@@ -148,64 +147,64 @@ async def file_done(ctx: HydraContext, chunk: Chunk) -> None:
 
     filename = chunk.file.meta.filename
     file_obj = chunk.file
-    try:
-        if chunk.file.meta.content_length:
-            if chunk.file.verified or not chunk.file.is_complete:
-                return
-            chunk.file.verified = True
-            if not ctx.fs.verify_size(filename, file_obj.meta.content_length):
-                return
-
-        if file_obj.meta.expected_checksum:
-            await log(
-                ctx.ui,
-                f"Verifying Hash checksum for {chunk.file.meta.filename}...",
-                status=LogStatus.INFO,
-            )
-            await ctx.fs.verify_file_hash(
-                file_obj.meta.filename,
-                file_obj.meta.expected_checksum.value,
-                file_obj.meta.expected_checksum.algorithm,
-            )
-            await log(
-                ctx.ui,
-                f"Integrity confirmed: {chunk.file.meta.filename}",
-                status=LogStatus.SUCCESS,
-            )
-
-    except HydraError:
-        raise
-
+    if chunk.file.meta.content_length:
+        if chunk.file.verified or not chunk.file.is_complete:
+            return
+        chunk.file.verified = True
+        if not ctx.fs.verify_size(filename, file_obj.meta.content_length):
+            return
+    if file_obj.meta.expected_checksum:
+        await log(
+            ctx.ui,
+            f"Verifying Hash checksum for {chunk.file.meta.filename}...",
+            status=LogStatus.INFO,
+        )
+        await ctx.fs.verify_file_hash(
+            file_obj.meta.filename,
+            file_obj.meta.expected_checksum.value,
+            file_obj.meta.expected_checksum.algorithm,
+        )
+        await log(
+            ctx.ui,
+            f"Integrity confirmed: {chunk.file.meta.filename}",
+            status=LogStatus.SUCCESS,
+        )
     ctx.fs.close_file(fd_or_conn=file_obj.fd)
     ctx.fs.delete_state(filename)
     await done(ctx.ui, filename)
     del ctx.files[chunk.file.meta.id]
     ctx.current_files_id.remove(chunk.file.meta.id)
-
     async with ctx.sync.current_files:
         ctx.sync.current_files.notify_all()
-
-    if not ctx.files:
-        ctx.sync.all_complete.set()
-        ctx.ui.speed.checkpoint_event.set()
-        ctx.dynamic_limit = sys.maxsize
-        async with ctx.sync.dynamic_limit:
-            ctx.sync.dynamic_limit.notify_all()
 
 
 async def get_chunk(ctx: HydraContext) -> Chunk | None:
     if ctx.stream:
-        _, chunk = await ctx.queues.chunk.get()
+        id, chunk = await ctx.queues.chunk.get()
     else:
-        chunk, _ = await ctx.queues.chunk.get()
+        chunk, id = await ctx.queues.chunk.get()
     chunk = cast(Chunk, chunk)
-    if _ == sys.maxsize:
+    id = cast(int, id)
+
+    if sys.maxsize - ctx.tasks.workers < id:
+        if not ctx.sync.stop_telemetry.is_set():
+            ctx.sync.stop_telemetry.set()
+            ctx.ui.speed.checkpoint_event.set()
+            ctx.dynamic_limit = sys.maxsize
+            async with ctx.sync.dynamic_limit:
+                ctx.sync.dynamic_limit.notify_all()
+                ctx.sync.all_complete.set()
+
+        if id == sys.maxsize:
+            await log(ctx.ui, f"{ctx.tasks.workers}", status=LogStatus.WARNING)
+            if ctx.stream:
+                await ctx.queues.file_discovery.put(-1)
+
         raise asyncio.CancelledError
 
     file_obj = chunk.file
     if not file_obj or file_obj.is_failed:
         return None
-
     if ctx.stream:
         async with ctx.sync.chunk_from_future:
             await ctx.sync.chunk_from_future.wait_for(
@@ -225,7 +224,6 @@ async def download_worker(ctx: HydraContext, worker_id: int) -> None:
                         lambda: worker_id < ctx.dynamic_limit
                     )
             chunk = None
-
             chunk = await get_chunk(ctx)
             if chunk is None:
                 continue

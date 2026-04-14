@@ -112,8 +112,7 @@ class Chunk:
 
     @property
     def file(self) -> File:
-        if self._file_ref:
-            obj = self._file_ref()
+        obj = self._file_ref() if self._file_ref else None
         if obj is None:
             # Выбрасываем структурированную ошибку вместо безликого RuntimeError
             raise OrphanedChunkError(start_pos=self.start, end_pos=self.end)
@@ -224,7 +223,7 @@ class File:
                     start=0,
                     end=sys.maxsize
                     if not self.meta.content_length
-                    else self.meta.content_length,
+                    else self.meta.content_length - 1,
                     current_pos=0,
                     _file_ref=weakref.ref(self),
                 )
@@ -300,6 +299,10 @@ class DisplayConfig:
     verify: bool = True
     debug: bool = False
 
+    def __post_init__(self) -> None:
+        if self.debug:
+            self.quiet = False
+
 
 @entity
 class ProgressState:
@@ -371,7 +374,9 @@ class SpeedLimiterState:
 class RichUIState:
     """Всё, что относится к библиотеке Rich (Прогресс-бары, консоль)."""
 
-    console: Console = field(default_factory=lambda: Console(stderr=True))
+    console: Console = field(
+        default_factory=lambda: Console(file=sys.__stderr__, stderr=True)
+    )
     refresh_per_second: int = 10
     renewal_rate: float = field(init=False)
     dynamic_title: str = ""
@@ -609,6 +614,7 @@ class SyncSet:
     current_files: asyncio.Condition = field(default_factory=asyncio.Condition)
     chunk_from_future: asyncio.Condition = field(default_factory=asyncio.Condition)
     dynamic_limit: asyncio.Condition = field(default_factory=asyncio.Condition)
+    stop_telemetry: asyncio.Event = field(default_factory=asyncio.Event)
     all_complete: asyncio.Event = field(default_factory=asyncio.Event)
 
 
@@ -640,6 +646,7 @@ class HydraContext:
     ui: UIState = field(init=False)
 
     def __post_init__(self) -> None:
+        self.dynamic_limit = 5 if self.config.threads >= 5 else self.config.threads
         # Инициализируем UI, собирая его из настроек конфига
         self.ui = UIState(
             display=DisplayConfig(
@@ -648,6 +655,7 @@ class HydraContext:
                 dry_run=self.config.dry_run,
                 json_logs=self.config.json_logs,
                 verify=self.config.verify,
+                debug=self.config.debug,
             ),
             log=LogState(log_file=Path(self.config.output_dir) / "download.log"),
             speed=SpeedLimiterState(speed_limit=self.config.speed_limit),

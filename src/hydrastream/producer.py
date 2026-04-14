@@ -26,6 +26,7 @@ async def chunk_producer(  # noqa
             if sys.maxsize - ctx.tasks.creators < id:
                 if id == sys.maxsize:
                     await ctx.queues.dispatch_file.put((sys.maxsize, None))
+                    ctx.discovery_completed = True
                     if ctx.config.dry_run:
                         ctx.sync.all_complete.set()
                 break
@@ -249,9 +250,12 @@ async def dispatch_chunks(ctx: HydraContext) -> None:
                 await ctx.sync.current_files.wait_for(
                     lambda: len(ctx.current_files_id) < ctx.config.threads
                 )
+
     c = Chunk(current_pos=sys.maxsize, start=sys.maxsize, end=sys.maxsize)
-    for _ in range(ctx.tasks.workers):
-        if ctx.stream:
-            await ctx.queues.chunk.put((sys.maxsize, c))  # type: ignore
-        else:
-            await ctx.queues.chunk.put((c, sys.maxsize))  # type: ignore
+    await log(ctx.ui, f"{ctx.tasks.workers}", status=LogStatus.WARNING)
+    if ctx.stream:
+        for i in range(ctx.tasks.workers - 1, -1, -1):
+            await ctx.queues.chunk.put((sys.maxsize - i, c))  # type: ignore
+    else:
+        for i in range(ctx.tasks.workers - 1, -1, -1):
+            await ctx.queues.chunk.put((c, sys.maxsize - i))  # type: ignore
