@@ -6,7 +6,7 @@ from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any
 
-from hydrastream.utils import format_size
+from hydrastream.utils import format_size, redact_url
 
 
 class ExitCode(IntEnum):
@@ -86,6 +86,7 @@ class DownloadFailedError(HydraError):
     log_status: LogStatus = LogStatus.ERROR
 
     def __post_init__(self) -> None:
+        self.url = redact_url(self.url)
         parts = [f"Failed to download {self.url}"]
 
         if self.status_code:

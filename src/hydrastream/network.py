@@ -21,6 +21,7 @@ from curl_cffi.requests.session import HttpMethod, RequestParams
 from hydrastream.exceptions import LogStatus
 from hydrastream.models import AMIDState, NetworkState
 from hydrastream.monitor import log
+from hydrastream.utils import redact_url
 
 
 async def report_429(
@@ -104,11 +105,12 @@ async def _evaluate_failure(
 ) -> float | None:
     retry_codes = {408, 429, 500, 502, 503, 504}
 
+    safe_url = redact_url(url)
     if response is not None:
         if response.status_code not in retry_codes:
             await log(
                 ctx.monitor,
-                f"Fatal HTTP error {response.status_code} for {url}",
+                f"Fatal HTTP error {response.status_code} for {safe_url}",
                 status=LogStatus.ERROR,
             )
             return None
@@ -124,7 +126,7 @@ async def _evaluate_failure(
         )
         await log(
             ctx.monitor,
-            f"Attempt {attempt} failed ({response.status_code}) for {url}. "
+            f"Attempt {attempt} failed ({response.status_code}) for {safe_url}. "
             f"Retrying in {delay:.2f}s...",
             status=LogStatus.WARNING,
             throttle_key="net_slow",
@@ -142,7 +144,8 @@ async def _evaluate_failure(
             delay = random.uniform(0, 2**attempt)
             await log(
                 ctx.monitor,
-                f"Network issue ({err_name}) on {url}. Retrying in {delay:.2f}s...",
+                f"Network issue ({err_name}) on {safe_url}. "
+                f"Retrying in {delay:.2f}s...",
                 status=LogStatus.WARNING,
                 throttle_key="net_drop",
             )
@@ -150,7 +153,7 @@ async def _evaluate_failure(
 
         await log(
             ctx.monitor,
-            f"Unrecoverable request error for {url}: {exc}",
+            f"Unrecoverable request error for {safe_url}: {exc}",
             status=LogStatus.ERROR,
         )
         return None

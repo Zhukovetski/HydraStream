@@ -13,12 +13,12 @@ from hydrastream.models import Checksum, File, FileMeta, HydraContext, TypeHash
 from hydrastream.monitor import add_file, done, log, update
 from hydrastream.network import extract_filename, safe_request, stream_chunk
 from hydrastream.providers import ProviderRouter
+from hydrastream.utils import redact_url
 
 
 async def metadata_resolver(  # noqa
     ctx: HydraContext,
 ) -> None:
-
     while True:
         try:
             id, url, checksum = await ctx.queues.links.get()
@@ -61,7 +61,7 @@ async def metadata_resolver(  # noqa
                 if url and status in {400, 401, 403, 404, 410, 416}:
                     await log(
                         ctx.ui,
-                        f"Link {url} failed permanently (HTTP {status}).",
+                        f"Link {redact_url(url)} failed permanently (HTTP {status}).",
                         status=LogStatus.ERROR,
                     )
                     continue
@@ -99,7 +99,6 @@ async def requeue_chunk(
     checksum: Checksum | None,
     delay_range: tuple[float, float] = (1.0, 3.0),
 ) -> None:
-
     await ctx.queues.links.put((id, url, checksum))
     delay = random.uniform(*delay_range)
     await asyncio.sleep(delay)
