@@ -186,7 +186,6 @@ async def safe_request(
             if response is not None:
                 raise RequestsError(
                     f"Request failed on {url}",
-                    request=response.request,
                     response=response,
                 )
             raise RequestsError(f"Request failed on {url} before response was received")
@@ -209,6 +208,12 @@ async def stream_chunk(
         async with acquire(ctx.rate_limiter):
             try:
                 async with ctx.client.stream("GET", url, headers=headers) as response:
+                    if headers and "Range" in headers and response.status_code == 200:
+                        raise RequestsError(
+                            "Server ignored Range header and returned 200 OK.",
+                            response=response,
+                        )
+
                     if response.status_code < 400:
                         if random.random() < 0.1:
                             await try_scale_up(ctx.rate_limiter)
@@ -232,7 +237,6 @@ async def stream_chunk(
             if response is not None:
                 raise RequestsError(
                     f"Stream failed on {url}",
-                    request=response.request,
                     response=response,
                 )
             raise RequestsError(f"Stream failed on {url} before response was received")

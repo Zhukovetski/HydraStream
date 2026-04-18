@@ -193,8 +193,8 @@ async def create_tasks(
 
     if not ctx.config.dry_run:
         for i in range(ctx.tasks.workers):
-            worker = DownloadWorker(worker_id=i)
-            tg.create_task(worker.run(ctx), name=f"Worker: {i}")
+            worker = DownloadWorker(ctx=ctx, worker_id=i)
+            tg.create_task(worker.run(), name=f"Worker: {i}")
 
     if not ctx.config.dry_run:
         tg.create_task(chunk_dispatcher(ctx), name="Dispatcher")

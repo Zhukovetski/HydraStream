@@ -213,39 +213,40 @@ async def async_main(  # noqa: C901, PLR0912
             else:
                 await loader.run(links, input_file, expected_checksums)
 
-                sys.exit(ExitCode.SUCCESS)
-
-    except (BaseException, BaseExceptionGroup) as e:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         if debug:
             raise
-        await handle_crash(ui, e)
+        sys.exit(ExitCode.INTERRUPTED)
+
+    except (Exception, ExceptionGroup) as e:
+        if debug:
+            raise
+
+        all_errors = flatten_exceptions(e)
+
         codes = []
-        if isinstance(e, BaseExceptionGroup):
-            codes = [
-                err.exit_code for err in e.exceptions if isinstance(err, HydraError)
-            ]
-        elif isinstance(e, HydraError):
-            codes = [e.exit_code]
+        for err in all_errors:
+            if isinstance(err, HydraError):
+                await report(ui, err)
+                await log(ui, f"FATAL: {err!r}", status=LogStatus.CRITICAL)
+                codes.append(err.exit_code)
 
         exit_code = max(codes) if codes else ExitCode.GENERAL_ERROR
+
         sys.exit(exit_code)
 
     finally:
         await log_stop(ui)
 
 
-async def handle_crash(
-    ui: UIState, error: BaseException | BaseExceptionGroup[BaseException]
-) -> None:
-    if isinstance(error, asyncio.CancelledError | KeyboardInterrupt):
-        sys.exit(ExitCode.INTERRUPTED)
-
-    if isinstance(error, BaseExceptionGroup):
-        for e in error.exceptions:
-            await handle_crash(ui, e)
-    elif isinstance(error, HydraError):
-        await report(ui, error)
-        await log(ui, f"FATAL ERROR: {error!r}", status=LogStatus.CRITICAL)
+def flatten_exceptions(e: BaseException) -> list[BaseException]:
+    """Разворачивает BaseExceptionGroup в плоский список ошибок."""
+    if isinstance(e, BaseExceptionGroup):
+        result = []
+        for child in e.exceptions:
+            result.extend(flatten_exceptions(child))
+        return result
+    return [e]
 
 
 def get_cfg(key: str, default: Any = None) -> Any:  # noqa: ANN401

@@ -2,14 +2,17 @@
 # Licensed under the MIT License.
 import hashlib
 import re
+import shlex
 import shutil
+import sys
 import threading
 import warnings
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
+from curl_cffi import BrowserTypeLiteral
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from pytest_httpserver import HTTPServer
@@ -23,8 +26,29 @@ warnings.filterwarnings("ignore", message=".*chunk_size is ignored.*")
 DUMMY_DATA = b"0123456789" * 10000
 DUMMY_MD5 = hashlib.md5(DUMMY_DATA).hexdigest()
 
+defaul = {
+    "links": None,
+    "input": None,
+    "typehash": "md5",
+    "hash": None,
+    "output": "download",
+    "threads": None,
+    "stream": False,
+    "dry-run": False,
+    "min-chunk-mb": 1,
+    "stream-chunk-mb": 5,
+    "buffer": None,
+    "limit": None,
+    "no-ui": False,
+    "quiet": False,
+    "json": False,
+    "verify": True,
+    "browser": "chrome120",
+    "debug": False,
+}
 
-def make_chaos_handler(seed: int, current_test_filenames: list[str]) -> Callable:
+
+def make_chaos_handler(seed: int, current_test_filenames: list[str]) -> Callable:  # noqa: C901
     """
     Фабрика. Создает обработчик, поведение которого на 100% зависит от seed.
     Если Hypothesis перезапустит тест с этим же seed, сервер поведет себя ИДЕНТИЧНО.
@@ -32,7 +56,7 @@ def make_chaos_handler(seed: int, current_test_filenames: list[str]) -> Callable
     request_counts = defaultdict(int)
     lock = threading.Lock()
 
-    def handler(request: Request) -> Response | None:
+    def handler(request: Request) -> Response | None:  # noqa: PLR0911
         # 1. Уникальная подпись запроса (Учитываем Range, чтобы чанки отличались)
         sig = f"{request.path}|{request.method}|{request.headers.get('Range', '')}"
 
@@ -90,6 +114,7 @@ def make_chaos_handler(seed: int, current_test_filenames: list[str]) -> Callable
             return Response(status=200, headers=headers)
 
         # --- 4. ОБРАБОТКА GET ---
+
         range_header = request.headers.get("Range")
 
         if range_header and range_header.startswith("bytes=") and not is_dumb_server:
@@ -98,6 +123,19 @@ def make_chaos_handler(seed: int, current_test_filenames: list[str]) -> Callable
             start, end = int(start_str), int(end_str)
 
             chunk = DUMMY_DATA[start : end + 1]
+
+            if rand_cloud < 0.1:
+                half_chunk = chunk[: len(chunk) // 2]
+                # Заметь: мы врем в заголовках! Говорим, что отдаем весь,
+                # а отдаем половину.
+                return Response(
+                    half_chunk,
+                    status=206,
+                    headers={
+                        "Content-Range": f"bytes {start}-{end}/{len(DUMMY_DATA)}",
+                        "Content-Length": str(len(chunk)),  # Вранье!
+                    },
+                )
 
             return Response(
                 chunk,
@@ -139,71 +177,82 @@ def filenames_strategy(draw: st.DrawFn) -> str:
     return f"{name}{ext}"
 
 
-# --- СТРАТЕГИЯ ГЕНЕРАЦИИ ДАННЫХ ---
 @st.composite
 def cli_fuzz_strategy(draw: st.DrawFn) -> dict[str, Any]:
-    """Генерирует случайные, но логически допустимые комбинации аргументов"""
+    all_paths = draw(st.lists(filenames_strategy(), min_size=1, max_size=10))
 
-    server_seed = draw(st.integers(min_value=0, max_value=99999999))
-    # Генерируем от 1 до 3 случайных путей файлов (только буквы и цифры)
-    paths = draw(
-        st.lists(
-            filenames_strategy(),
-            min_size=1,
-            max_size=10,
-        )
-    )
-    paths_with_meta = []
-    for p in paths:
-        # Просто используем booleans(), Hypothesis сама разберется с балансом
-        is_ncbi = draw(st.booleans())
-        prefix = "ncbi.nlm.nih.gov/" if is_ncbi else ""
-        paths_with_meta.append(f"{prefix}{p}")
+    split_idx = draw(st.integers(min_value=0, max_value=len(all_paths)))
 
-    input_mode = draw(st.integers(0, 2))
-    threads = draw(st.integers(1, 10))
-    min_chunk_mb = draw(st.integers(1, 10))
-    existing_copies = draw(st.integers(0, 5))
+    cli_paths = all_paths[:split_idx]
+    file_paths = all_paths[split_idx:]
 
-    flags = {
-        "--stream": draw(st.booleans()),
-        "--dry-run": draw(st.booleans()),
-        "--no-ui": draw(st.booleans()),
-        "--quiet": draw(st.booleans()),
-        "--json": draw(st.booleans()),
-        "--no-verify": draw(st.booleans()),
+    if not cli_paths and not file_paths:
+        cli_paths = [draw(filenames_strategy())]
+
+    params = {
+        "threads": draw(st.one_of(st.none(), st.integers(1, 128))),
+        "browser": draw(
+            st.one_of(st.none(), st.sampled_from(list(get_args(BrowserTypeLiteral))))
+        ),
+        "buffer": draw(st.one_of(st.none(), st.integers(1, 100))),
+        "limit": draw(st.one_of(st.none(), st.floats(0.1, 100.0))),
+        "min-chunk-mb": draw(st.one_of(st.none(), st.integers(1, 20))),
+        "stream-chunk-mb": draw(st.one_of(st.none(), st.integers(1, 20))),
+        "flags": draw(
+            st.fixed_dictionaries({
+                "stream": st.booleans(),
+                "dry-run": st.booleans(),
+                "no-ui": st.booleans(),
+                "quiet": st.booleans(),
+                "json": st.booleans(),
+                "no-verify": st.booleans(),
+                "debug": st.booleans(),
+            })
+        ),
     }
 
     placeholder = "http://localhost:SERVER_PORT/"
+    cli_urls = [
+        f"{placeholder}{'ncbi.nlm.nih.gov/' if draw(st.booleans()) else ''}{p}"
+        for p in cli_paths
+    ]
+    file_urls = [
+        f"{placeholder}{'ncbi.nlm.nih.gov/' if draw(st.booleans()) else ''}{p}"
+        for p in file_paths
+    ]
 
-    cli_urls = []
-    file_urls = []
+    args = build_args_list(params, cli_urls)
 
-    for i, p in enumerate(paths_with_meta):
-        url = f"{placeholder}{p}"
-        if input_mode == 0 or (input_mode == 2 and i % 2 == 0):
-            cli_urls.append(url)
-        else:
-            file_urls.append(url)
+    if len(all_paths) == 1 and draw(st.booleans()):
+        args.extend(["--hash", DUMMY_MD5, "--typehash", "md5"])
 
-    # Собираем список аргументов (пока с плейсхолдерами)
-    args = cli_urls
-    for flag, enabled in flags.items():
-        if enabled:
-            args.append(flag)
+    # args.append("--debug")
 
-    args.extend(["--threads", str(threads), "--min-chunk-mb", str(min_chunk_mb)])
     return {
-        "server_seed": server_seed,
         "args_template": args,
-        "paths": paths,
+        "paths": all_paths,
+        "existing_copies": draw(st.integers(0, 5)),
+        "existing_files": draw(st.sampled_from(all_paths)),
         "file_urls_template": file_urls,
-        "existing_copies": existing_copies,
-        "first_path_name": str("".join(paths[0])),
-        # Пробрасываем флаги для проверок в ассертах
-        "is_dry_run": flags["--dry-run"],
-        "is_stream": flags["--stream"],
+        "server_seed": draw(st.integers(0, 999999)),
     }
+
+
+def build_args_list(params: dict, urls: list[str]) -> list[str]:
+    args = urls[:]
+
+    # Флаги
+    for name, value in params.items():
+        if isinstance(value, dict):
+            for flag, enabled in value.items():
+                if enabled:
+                    args.append(f"--{flag}")
+            continue
+
+        if value is not None:
+            args.extend([f"--{name}", str(value)])
+
+    return args
 
 
 @given(data=cli_fuzz_strategy())
@@ -226,10 +275,10 @@ def test_hypothesis_nuclear_fuzzer(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if data["existing_copies"] > 0:
-        stem = Path(data["first_path_name"]).stem
-        suffix = Path(data["first_path_name"]).suffix
+        stem = Path(data["existing_files"]).stem
+        suffix = Path(data["existing_files"]).suffix
         for i in range(data["existing_copies"]):
-            name = data["first_path_name"] if i == 0 else f"{stem} ({i}){suffix}"
+            name = data["existing_files"] if i == 0 else f"{stem} ({i}){suffix}"
             (out_dir / name).touch()
             # Добавляем .state.json для веса
             state_dir = out_dir / ".state"
@@ -252,9 +301,11 @@ def test_hypothesis_nuclear_fuzzer(
         final_args.extend(["--input", str(urls_txt)])
     # 3. УДАР! (Запускаем CLI)
     num_file = len(list(out_dir.glob("*")))
-    final_args.append("--debug")
 
-    print(final_args)
+    print(
+        f"Running: my-tool {' '.join(shlex.quote(a) for a in final_args)}",
+        file=sys.__stderr__,
+    )
     result = runner.invoke(app, final_args)
 
     # 4. ПРОВЕРКА ИНВАРИАНТОВ (ГЛАВНАЯ МАГИЯ PBT)
@@ -264,6 +315,9 @@ def test_hypothesis_nuclear_fuzzer(
     assert result.exception is None, (
         f"КРАШ ПРОГРАММЫ! Комбинация: {final_args}\nВывод: {result.stdout}"
     )
+    assert result.exit_code != 1, (
+        f"CRITICAL CRASH! Exit code 1. Stdout:\n{result.stdout}"
+    )
     # 1. Список исключений
     ignored = {"download.log", ".states"}
 
@@ -272,18 +326,22 @@ def test_hypothesis_nuclear_fuzzer(
 
     # Инвариант 2: Если это DRY-RUN, на диске НЕ ДОЛЖНО быть создано ни одного
     # файла генома
-    if data["is_dry_run"]:
+    if "--dry-run" in data["args_template"]:
         assert len(leftovers) == num_file, (
             f"DRY-RUN нарушил обещание и скачал файлы на диск!"
             f"Было {num_file}. Стало {len(leftovers)}"
         )
 
     # Инвариант 3: Если это STREAM, на диске тоже пусто
-    if data["is_stream"]:
+    if "--stream" in data["args_template"]:
         assert len(leftovers) == num_file, "STREAM записал бинарники на диск!"
 
     # Инвариант 4: Если это обычная загрузка, файлы должны лежать на диске
-    if not data["is_stream"] and not data["is_dry_run"] and result.exit_code == 0:
+    if (
+        "--stream" not in data["args_template"]
+        and "--dry-run" not in data["args_template"]
+        and result.exit_code == 0
+    ):
         # Количество скачанных файлов должно совпадать с количеством уникальных ссылок
         assert len(leftovers) <= len(data["paths"]) + num_file, (
             f"Файлы не скачались! Лог терминала:\n{result.stdout}"
