@@ -7,35 +7,39 @@ import os
 import random
 import sys
 import traceback
-from dataclasses import dataclass
 
 from curl_cffi import Response
 from curl_cffi.requests import RequestsError
 
 from hydrastream._curl_shim import aiter_bytes, get_error_response
+from hydrastream.actors.controller import MaxLimitSignal, NetworkCongestionSignal
 from hydrastream.exceptions import (
     DownloadFailedError,
     LogStatus,
     StreamError,
     WorkerScaleDown,
 )
-from hydrastream.models import Chunk, Envelope, HydraContext, StreamChunk, WriteChunk
+from hydrastream.models import (
+    Chunk,
+    Envelope,
+    HydraContext,
+    StreamChunk,
+    WriteChunk,
+    my_dataclass,
+)
 from hydrastream.monitor import done, log, update
 from hydrastream.network import stream_chunk, try_scale_up
 
 
-@dataclass
+@my_dataclass
 class DownloadWorker:
     ctx: HydraContext
-    worker_id: int
+    controller_outbox: asyncio.Queue[object]
+    dynamic_limit_event: asyncio.Event
 
     async def run(self) -> None:
         while True:
-            if self.worker_id >= self.ctx.dynamic_limit:
-                async with self.ctx.sync.dynamic_limit:
-                    await self.ctx.sync.dynamic_limit.wait_for(
-                        lambda: self.worker_id < self.ctx.dynamic_limit
-                    )
+            await self.dynamic_limit_event.wait()
             envelope, chunk = await self.get_chunk()
             if envelope is None:
                 break
@@ -68,8 +72,7 @@ class DownloadWorker:
                 self.ctx.sync.stop_adaptive_controller.set()
                 self.ctx.ui.speed.controller_checkpoint_event.set()
                 self.ctx.dynamic_limit = sys.maxsize
-                async with self.ctx.sync.dynamic_limit:
-                    self.ctx.sync.dynamic_limit.notify_all()
+                await self.controller_outbox.put(MaxLimitSignal())
 
             if envelope.is_last_survivor:
                 if self.ctx.stream:
@@ -114,8 +117,7 @@ class DownloadWorker:
         if isinstance(e, RequestsError):
             await self._handle_requests_error(envelope, chunk, e)
             self.ctx.dynamic_limit = max(self.ctx.dynamic_limit - 1, 1)
-            async with self.ctx.sync.dynamic_limit:
-                self.ctx.sync.dynamic_limit.notify_all()
+            await self.controller_outbox.put(NetworkCongestionSignal())
             return
 
         if isinstance(e, TimeoutError):
@@ -276,10 +278,11 @@ class DownloadWorker:
                         if random.random() < 0.1:
                             await try_scale_up(self.ctx.net.rate_limiter)
 
-                    if self.ctx.dynamic_limit <= self.worker_id:
-                        raise WorkerScaleDown
                     if bytes_to_read <= 0:
                         break
+
+                    if not self.dynamic_limit_event.is_set():
+                        raise WorkerScaleDown
 
             finally:
                 self.ctx.active_stream.remove(r)
@@ -327,7 +330,7 @@ class DownloadWorker:
                     )
                     chunk.current_pos = chunk.current_pos + len(data)
 
-                    if self.ctx.dynamic_limit <= self.worker_id:
+                    if not self.dynamic_limit_event.is_set():
                         raise WorkerScaleDown
 
                     if bytes_to_read <= 0:

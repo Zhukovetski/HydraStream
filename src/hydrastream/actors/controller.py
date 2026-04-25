@@ -1,109 +1,80 @@
 # Copyright (c) 2026 Valentin Zhukovetski
 # Licensed under the MIT License.
 
-import math
-import time
-from dataclasses import dataclass, field
+import asyncio
 
-from hydrastream.exceptions import (
-    LogStatus,
-)
-from hydrastream.models import HydraContext
-from hydrastream.monitor import log
-from hydrastream.utils import format_size
+from hydrastream.models import my_dataclass
 
 
-@dataclass
-class AdaptiveEngine:
-    ctx: HydraContext
-    current_limit: int = field(init=False)
-    smoothed_speed: float = 0.0
-    prev_speed: float = 0.0
-    tau: float = 1.0
-    min_window: int = 1024
-    sensitivity: float = 0.05
+@my_dataclass(frozen=True)
+class NetworkCongestionSignal:
+    """Сигнал от воркера, что сеть забита (429/503 Error)"""
+
+    pass
+
+
+@my_dataclass(frozen=True)
+class MaxLimitSignal:
+    """Сигнал, что загрузка почти окончена, будим всех воркеров"""
+
+    pass
+
+
+@my_dataclass(frozen=True)
+class ScaleUpSignal:
+    """Сигнал от Телеметрии: скорость растет, добавляем воркера"""
+
+    pass
+
+
+@my_dataclass(frozen=True)
+class ScaleDownSignal:
+    """Сигнал от Телеметрии: скорость падает, убираем воркера"""
+
+    pass
+
+
+@my_dataclass
+class TrafficController:
+    inbox: asyncio.Queue[object]
+    worker_events: list[asyncio.Event]
+
+    dynamic_limit: int = 1
+    prev_dynamic_limit: int = 1
 
     def __post_init__(self) -> None:
-        self.current_limit = self.ctx.dynamic_limit
+        for i in range(self.dynamic_limit):
+            self.worker_events[i].set()
 
     async def run(self) -> None:
-        while not self.ctx.sync.all_complete.is_set():
-            try:
-                await self.ctx.ui.speed.controller_checkpoint_event.wait()
-                if self.ctx.sync.stop_adaptive_controller.is_set():
-                    break
-                self.ctx.ui.speed.controller_checkpoint_event.clear()
+        while True:
+            msg = await self.inbox.get()
 
-                # Просто делаем шаг
-                await self._step()
+            if isinstance(msg, NetworkCongestionSignal | ScaleDownSignal):
+                self.dynamic_limit = max(1, self.dynamic_limit - 1)
 
-            except Exception as e:
-                if self.ctx.config.debug:
-                    raise
-                await log(
-                    self.ctx.ui,
-                    f"Adaptive controller failed: {e}",
-                    status=LogStatus.ERROR,
+            elif isinstance(msg, ScaleUpSignal):
+                self.dynamic_limit = min(
+                    len(self.worker_events), self.dynamic_limit + 1
                 )
 
-    def _calculate_ema(self, speed_now: float, elapsed: float) -> float:
-        if self.smoothed_speed == 0.0:
-            return speed_now
-        alpha = 1.0 - math.exp(-elapsed / self.tau)
-        return (alpha * speed_now) + ((1.0 - alpha) * self.smoothed_speed)
+            elif isinstance(msg, MaxLimitSignal):
+                self.dynamic_limit = len(self.worker_events)
+                self._update_lights()
+                break
 
-    def _update_window(self, speed_now: float, elapsed: float) -> None:
-        safe_speed = max(speed_now, 0.001)
-        coef = 1 / safe_speed**0.25
-        new_bytes = int(self.ctx.ui.speed.bytes_to_check * (1 - coef + elapsed))
-        self.ctx.ui.speed.bytes_to_check = max(self.min_window, new_bytes)
+            if self.dynamic_limit != self.prev_dynamic_limit:
+                self._update_lights()
 
-    async def _log_scale_event(self, direction: str, speed: float) -> None:
-        """Вспомогательный метод для чистого логирования."""
-        if direction == "up":
-            msg = (
-                f"Speed increased to {format_size(speed)}/s. "
-                f"Scaling up to {self.current_limit} workers."
-            )
-            status = LogStatus.INFO
-            key = "scale_up"
+    def _update_lights(self) -> None:
+        start, end = sorted((self.prev_dynamic_limit, self.dynamic_limit))
+        events_to_update = self.worker_events[start:end]
+
+        if self.dynamic_limit > self.prev_dynamic_limit:
+            for event in events_to_update:
+                event.set()
         else:
-            msg = f"Network congested. Scaling down to {self.current_limit} workers."
-            status = LogStatus.WARNING
-            key = "scale_down"
+            for event in events_to_update:
+                event.clear()
 
-        await log(self.ctx.ui, msg, status=status, throttle_key=key, throttle_sec=5.0)
-
-    async def _step(self) -> None:
-        """Один шаг адаптации."""
-        now = time.monotonic()
-        elapsed = min(1, now - self.ctx.ui.speed.last_checkpoint_time)
-        if elapsed <= 0:
-            return
-
-        speed_now = self.ctx.ui.speed.bytes_to_check / elapsed
-        self.smoothed_speed = self._calculate_ema(speed_now, elapsed)
-        self._update_window(speed_now, elapsed)
-
-        # Логика изменения лимита
-        if self.smoothed_speed > self.prev_speed * (1 + self.sensitivity):
-            if self.current_limit < self.ctx.config.threads:
-                self.current_limit += 1
-                self.prev_speed = self.smoothed_speed
-                await self._log_scale_event("up", speed_now)
-
-        elif (
-            self.smoothed_speed < self.prev_speed * (1 - self.sensitivity)
-            and self.current_limit > 2
-        ):
-            self.current_limit -= 1
-            self.prev_speed = self.smoothed_speed
-            await self._log_scale_event("down", speed_now)
-
-        # Применяем изменения
-        if self.ctx.dynamic_limit != self.current_limit:
-            self.ctx.dynamic_limit = self.current_limit
-            async with self.ctx.sync.dynamic_limit:
-                self.ctx.sync.dynamic_limit.notify_all()
-
-        self.ctx.ui.speed.last_checkpoint_time = time.monotonic()
+        self.prev_dynamic_limit = self.dynamic_limit

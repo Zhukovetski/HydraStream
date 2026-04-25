@@ -6,9 +6,10 @@ import contextlib
 import math
 import random
 import signal
+import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import TypeVarTuple, Unpack
+from typing import Any, TypeVarTuple, Unpack
 
 from hydrastream.actors.autosaver import autosaver, save_all_states
 from hydrastream.actors.controller import AdaptiveEngine
@@ -26,6 +27,32 @@ from hydrastream.models import Checksum, Envelope, HydraContext, TypeHash
 from hydrastream.monitor import log, print_dry_run_report, ui_start, ui_stop
 
 Ts = TypeVarTuple("Ts")
+
+
+async def send_poison_pills(
+    queue: asyncio.PriorityQueue[Envelope[Any | None]],
+    count: int,
+    envelope_factory: Callable[[int, bool], Envelope[None]] | None = None,
+) -> None:
+
+    factory: Callable[[int, bool], Envelope[None]]
+
+    if envelope_factory is None:
+
+        def _default_factory(i: int, last: bool) -> Envelope[None]:
+            return Envelope(
+                sort_key=(sys.maxsize - i,), is_poison_pill=True, is_last_survivor=last
+            )
+
+        factory = _default_factory
+    else:
+        factory = envelope_factory
+
+    for i in range(count - 1, 0, -1):
+        await queue.put(factory(i, False))
+
+    # Последняя "выжившая" пилюля
+    await queue.put(factory(0, True))
 
 
 async def delayed_task(
@@ -116,15 +143,27 @@ async def create_tasks(
             if ctx.config.threads > 1
             else ctx.config.threads
         )
-
     if not ctx.config.dry_run:
+        worker_events = [asyncio.Event() for _ in range(ctx.tasks.workers)]
+
         for i in range(ctx.tasks.workers):
-            worker = DownloadWorker(ctx=ctx, worker_id=i)
+            worker = DownloadWorker(ctx=ctx, worker_id=i, wakeup_event=worker_events[i])
             tg.create_task(worker.run(), name=f"Worker: {i}")
 
-    if not ctx.config.dry_run:
         tg.create_task(chunk_dispatcher(ctx), name="Dispatcher")
         ctx.tasks.dispatcher = 1
+
+        tg.create_task(throttle_controller(ctx), name="Throttler")
+        ctx.tasks.throttler = 1
+
+        if ctx.config.threads > 1:
+            controller = AdaptiveEngine(ctx, worker_events=worker_events)
+            tg.create_task(controller.run(), name="Controller")
+            ctx.tasks.controller = 1
+
+        if not ctx.stream:
+            tg.create_task(autosaver(ctx, interval=60), name="Autosaver")
+            ctx.tasks.autosaver = 1
 
     for i in range(ctx.tasks.resolvers):
         tg.create_task(
@@ -134,19 +173,6 @@ async def create_tasks(
 
     tg.create_task(link_feeder(ctx, links, expected_checksums), name="Feeder")
     ctx.tasks.feeder = 1
-
-    if not ctx.config.dry_run:
-        tg.create_task(throttle_controller(ctx), name="Throttler")
-        ctx.tasks.throttler = 1
-
-        if ctx.config.threads > 1:
-            controller = AdaptiveEngine(ctx)
-            tg.create_task(controller.run(), name="Controller")
-            ctx.tasks.controller = 1
-
-        if not ctx.stream:
-            tg.create_task(autosaver(ctx, interval=60), name="Autosaver")
-            ctx.tasks.autosaver = 1
 
 
 async def session_killer(ctx: HydraContext) -> None:

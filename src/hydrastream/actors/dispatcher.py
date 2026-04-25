@@ -1,65 +1,55 @@
 # Copyright (c) 2026 Valentin Zhukovetski
 # Licensed under the MIT License.
 
-import sys
+import asyncio
 
-from hydrastream.models import Envelope, HydraContext
+from hydrastream.engine import send_poison_pills
+from hydrastream.models import Chunk, Envelope, File, HydraContext, my_dataclass
 
 
-async def chunk_dispatcher(ctx: HydraContext) -> None:  # noqa: C901
-    if ctx.stream:
+@my_dataclass
+class FileDispatcher:
+    limit: int
+    current_files: int = 0
+    file_inbox: asyncio.PriorityQueue[Envelope[File | None]]
+    limit_inbox: asyncio.Queue[object]
+    chunk_outbox: asyncio.PriorityQueue[Envelope[Chunk | None]]
+    num_memory_throtller: int
 
-        def make_key(f_id: int, pos: int) -> tuple[int, int]:
-            return (f_id, pos)
+    async def chunk_dispatcher(self, ctx: HydraContext) -> None:
+        pending_file: Envelope[File | None] | None = None
 
-        def can_continue() -> bool:
-            return not ctx.current_files_id
+        while True:
+            if pending_file is None:
+                pending_file = await self.file_inbox.get()
 
-    else:
-
-        def make_key(f_id: int, pos: int) -> tuple[int, int]:
-            return (pos, f_id)
-
-        limit = ctx.config.threads  # кэшируем лимит для скорости
-
-        def can_continue() -> bool:
-            return len(ctx.current_files_id) < limit
-
-    while True:
-        envelope = await ctx.queues.dispatch_file.get()
-
-        if envelope.is_poison_pill:
-            break
-
-        if not (file := envelope.payload):
-            continue
-
-        if ctx.stream:
-            await ctx.queues.file_discovery.put(file.meta.id)
-
-        file.create_chunks()
-        for c in file.chunks:
-            if c.current_pos <= c.end:
-                await ctx.queues.chunk.put(
-                    Envelope(
-                        sort_key=make_key(file.meta.id, c.current_pos),
-                        payload=c,
+                if pending_file.is_poison_pill:
+                    await send_poison_pills(
+                        self.chunk_outbox, self.num_memory_throtller
                     )
-                )
+                    break
 
-        ctx.current_files_id.add(file.meta.id)
+                if not (file := pending_file.payload):
+                    continue
 
-        async with ctx.sync.current_files:
-            await ctx.sync.current_files.wait_for(can_continue)
+                if ctx.stream:
+                    await ctx.queues.file_discovery.put(file.meta.id)
 
-    for i in range(ctx.tasks.workers - 1, 0, -1):
-        await ctx.queues.chunk.put(
-            Envelope(sort_key=(sys.maxsize - i,), is_poison_pill=True)
-        )
-    await ctx.queues.chunk.put(
-        Envelope(
-            sort_key=(sys.maxsize,),
-            is_poison_pill=True,
-            is_last_survivor=True,
-        )
-    )
+                if self.current_files >= self.limit:
+                    await self.limit_inbox.get()
+                    self.current_files -= 1
+                    continue
+
+                self.current_files += 1
+
+                file.create_chunks()
+                for c in file.chunks:
+                    if c.current_pos <= c.end:
+                        await self.chunk_outbox.put(
+                            Envelope(
+                                sort_key=(c.current_pos, file.meta.id),
+                                payload=c,
+                            )
+                        )
+                pending_file = None
+                file = None

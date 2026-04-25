@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import field
 from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any
 
+from hydrastream.models import my_dataclass
 from hydrastream.utils import format_size, redact_url
 
 
@@ -27,7 +28,7 @@ class LogStatus(StrEnum):
     INTERRUPT = "INTERRUPT"
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class HydraError(Exception):
     exit_code: ExitCode = ExitCode.GENERAL_ERROR
     log_status: LogStatus = LogStatus.ERROR
@@ -45,7 +46,7 @@ class HydraError(Exception):
         super().__init__(f"[{self.error_id}] {self.formatted_msg}")
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class HashMismatchError(HydraError):
     filename: str
     algorithm: str
@@ -62,7 +63,7 @@ class HashMismatchError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class InsufficientSpaceError(HydraError):
     path: str | Path
     required: int
@@ -76,7 +77,7 @@ class InsufficientSpaceError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class DownloadFailedError(HydraError):
     url: str
     status_code: int | None = None
@@ -104,7 +105,7 @@ class WorkerScaleDown(Exception):  # noqa: N818
     pass
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class FileSizeMismatchError(HydraError):
     filename: str
     expected: int
@@ -120,7 +121,7 @@ class FileSizeMismatchError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class HydraFileNotFoundError(HydraError):
     filename: str
     path: str
@@ -132,7 +133,7 @@ class HydraFileNotFoundError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class StateSaveError(HydraError):
     filename: str
     target_path: str
@@ -148,7 +149,7 @@ class StateSaveError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class OrphanedChunkError(HydraError):
     # В DOD нам важно знать, какой именно кусок данных "осиротел"
     start_pos: int
@@ -164,7 +165,7 @@ class OrphanedChunkError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class InvalidChecksumError(HydraError):
     algorithm: str
     value: str
@@ -180,7 +181,7 @@ class InvalidChecksumError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class LogFileError(HydraError):
     path: str
     original_err: str
@@ -194,7 +195,7 @@ class LogFileError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class SystemContextError(HydraError):
     operation: str  # Что мы пытались сделать (например, "initializing tasks")
     original_error: str  # Текст ошибки из OSError или Exception
@@ -213,7 +214,7 @@ class SystemContextError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class ValidationError(HydraError):
     # Универсальный класс для всех проблем с аргументами
     param: str
@@ -227,7 +228,7 @@ class ValidationError(HydraError):
         super().__post_init__()
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class FileReadError(HydraError):
     path: str
     reason: str
@@ -235,7 +236,7 @@ class FileReadError(HydraError):
     log_status: LogStatus = LogStatus.ERROR
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class InvalidParameterError(HydraError):
     param: str
     value: str | None = None
@@ -244,7 +245,7 @@ class InvalidParameterError(HydraError):
     log_status: LogStatus = LogStatus.WARNING  # Для ссылок можно WARNING,
 
 
-@dataclass(kw_only=True)
+@my_dataclass
 class StreamError(HydraError):
     url: str
     filename: str

@@ -8,6 +8,7 @@ import contextlib
 import sys
 import typing
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import (
@@ -18,7 +19,9 @@ from typing import (
     Literal,
     Self,
     TypeVar,
+    dataclass_transform,
     get_args,
+    overload,
 )
 from urllib.parse import urlparse
 
@@ -78,7 +81,42 @@ TypeHash = Literal[
 _T = TypeVar("_T")
 
 
-@dataclass(kw_only=True, slots=True)
+@dataclass_transform(kw_only_default=True, order_default=False)
+@overload
+def my_dataclass(cls: type[_T], /) -> type[_T]: ...
+
+
+@dataclass_transform(kw_only_default=True, order_default=False)
+@overload
+def my_dataclass(
+    *,
+    init: bool = True,
+    repr: bool = True,
+    eq: bool = True,
+    order: bool = False,
+    unsafe_hash: bool = False,
+    frozen: bool = False,
+    match_args: bool = True,
+    kw_only: bool = True,
+    slots: bool = True,
+    weakref_slot: bool = False,
+) -> Callable[[type[_T]], type[_T]]: ...
+
+
+def my_dataclass(cls: Any = None, /, **kwargs: Any) -> Any:
+    # Ваши дефолты
+    params = {"kw_only": True, "slots": True}
+    params.update(kwargs)
+
+    def wrap(obj: type[_T]) -> type[_T]:
+        return dataclass(**params)(obj)
+
+    if cls is None:
+        return wrap
+    return wrap(cls)
+
+
+@my_dataclass
 class Chunk:
     current_pos: int
     start: int
@@ -179,7 +217,7 @@ class Checksum(BaseModel):
         return self
 
 
-@dataclass(kw_only=True, slots=True, frozen=True)
+@my_dataclass(frozen=True)
 class FileMeta:
     id: int
     filename: str
@@ -189,7 +227,7 @@ class FileMeta:
     supports_ranges: bool
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class File:
     meta: FileMeta
     chunk_size: int
@@ -269,7 +307,7 @@ class File:
         return file_obj
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class DisplayConfig:
     """Настройки отображения, переданные юзером."""
 
@@ -285,7 +323,7 @@ class DisplayConfig:
             self.quiet = False
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class ProgressState:
     """Чисто статистика и счетчики загрузки."""
 
@@ -298,7 +336,7 @@ class ProgressState:
     files_completed: int = 0
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class LogState:
     """Всё, что касается записи логов на жесткий диск."""
 
@@ -325,7 +363,7 @@ class LogState:
             self.log_file = fallback
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class SpeedLimiterState:
     """Логика глобального ограничения скорости."""
 
@@ -352,7 +390,7 @@ class SpeedLimiterState:
         self.limit_event.set()
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class RichUIState:
     """Всё, что относится к библиотеке Rich (Прогресс-бары, консоль)."""
 
@@ -374,7 +412,7 @@ class RichUIState:
         self.renewal_rate = 1 / self.refresh_per_second
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class UIState:
     is_running: bool = False
     cancelled: bool = False
@@ -389,7 +427,7 @@ class UIState:
             self.rich.console = Console(file=sys.__stderr__, stderr=True)
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class AMIDState:
     max_rps: int
     min_rps: int = 1
@@ -397,7 +435,7 @@ class AMIDState:
     break_duration: int = 300
 
     monitor: UIState
-    lock: asyncio.Lock = field(default=asyncio.Lock())
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     limiter: AsyncLimiter = field(init=False)
 
     current_rps: int = field(init=False)
@@ -410,7 +448,7 @@ class AMIDState:
         self.limiter = AsyncLimiter(self.current_rps, 1)
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class NetworkState:
     threads: int
     monitor: UIState
@@ -517,14 +555,14 @@ class HydraConfig(BaseSettings):
         return 50 * 1024**2
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
+@my_dataclass(frozen=True)
 class LinkData:
     id: int
     url: str
     checksum: Checksum | None
 
 
-@dataclass(order=True, frozen=True, kw_only=True, slots=True)
+@my_dataclass(order=True, frozen=True)
 class WriteChunk:
     fd: int
     offset: int
@@ -532,7 +570,7 @@ class WriteChunk:
     data: list[bytes] = field(compare=False)
 
 
-@dataclass(order=True, frozen=True, kw_only=True, slots=True)
+@my_dataclass(order=True, frozen=True)
 class StreamChunk:
     start: int
     data: bytes = field(compare=False)
@@ -541,7 +579,7 @@ class StreamChunk:
 T_co = TypeVar("T_co", covariant=True)
 
 
-@dataclass(order=True, frozen=True, kw_only=True, slots=True)
+@my_dataclass(order=True, frozen=True)
 class Envelope(Generic[T_co]):
     sort_key: tuple[int, ...]
 
@@ -553,7 +591,7 @@ class Envelope(Generic[T_co]):
     is_last_survivor: bool = field(compare=False, default=False)
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class QueueSet:
     links: asyncio.PriorityQueue[Envelope[LinkData | None]] = field(
         default_factory=asyncio.PriorityQueue[Envelope[LinkData | None]]
@@ -573,7 +611,7 @@ class QueueSet:
     )
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class TaskCounts:
     feeder: int = 0
     resolvers: int = 0
@@ -584,17 +622,16 @@ class TaskCounts:
     controller: int = 0
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class SyncSet:
     current_files: asyncio.Condition = field(default_factory=asyncio.Condition)
     chunk_from_future: asyncio.Condition = field(default_factory=asyncio.Condition)
-    dynamic_limit: asyncio.Condition = field(default_factory=asyncio.Condition)
     flush_event: asyncio.Event = field(default_factory=asyncio.Event)
     stop_adaptive_controller: asyncio.Event = field(default_factory=asyncio.Event)
     all_complete: asyncio.Event = field(default_factory=asyncio.Event)
 
 
-@dataclass(kw_only=True, slots=True)
+@my_dataclass
 class HydraContext:
     config: HydraConfig
 
